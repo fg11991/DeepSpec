@@ -245,6 +245,10 @@ class BaseTrainer:
                 local_batch_size=int(self.args.train.local_batch_size),
                 gradient_accumulation_steps=self.gradient_accumulation_steps,
                 micro_batches_per_epoch=self.micro_batches_per_epoch,
+                sharding_layout={
+                    "sharding_strategy": str(self.args.train.sharding_strategy),
+                    "fsdp_auto_wrap": bool(self.args.train.get("fsdp_auto_wrap")),
+                },
             )
             self.next_micro_step = resume_state.next_micro_step
         else:
