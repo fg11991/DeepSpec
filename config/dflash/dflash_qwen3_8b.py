@@ -1,7 +1,7 @@
 import os
 from deepspec.trainer import Qwen3DSparkTrainer
-BASE_TB_DIR = os.path.expanduser("~/tensorboard")
-BASE_CKPT_DIR = os.path.expanduser("~/checkpoints")
+BASE_TB_DIR = os.path.expanduser(os.environ.get("DEEPSPEC_TB_DIR", "~/tensorboard"))
+BASE_CKPT_DIR = os.path.expanduser(os.environ.get("DEEPSPEC_CKPT_DIR", "~/checkpoints"))
 project_name = "deepspec"
 exp_name = "dflash_block7_qwen3_8b"
 seed = 42

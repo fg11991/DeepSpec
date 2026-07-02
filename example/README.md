@@ -45,12 +45,20 @@ docker run -it --name deepspec-train \
 NPU 适配版的 torch，不会被 requirements.txt 覆盖）。target cache 记得放数据盘：
 `cache_dir=/data/deepspec/qwen3_4b_target_cache`。
 
-> **训练输出必须挂载出来**：train.py 把 checkpoint 写到 `~/checkpoints/deepspec/<exp_name>/step_*`
-> （`step_latest` 软链指向最新，训练重启会自动从它续训）、tensorboard 写到
-> `~/tensorboard/deepspec/<exp_name>`。容器里 `~` 是 `/root`，上面两行 `-v` 就是为了
-> 让它们落在宿主机数据盘上——漏挂的话容器删除即丢。路径前缀是 config 里的
-> `BASE_CKPT_DIR`/`BASE_TB_DIR` 常量，`--opts` 改不了（`finalize_cfg` 在 opts 之后执行
-> 且会重算目录），要改位置直接改 config 或按上面挂载。
+> **训练输出必须落到数据盘**：train.py 把 checkpoint 写到
+> `$DEEPSPEC_CKPT_DIR/deepspec/<exp_name>/step_*`（默认 `~/checkpoints`，`step_latest`
+> 软链指向最新，训练重启会自动从它续训）、tensorboard 写到
+> `$DEEPSPEC_TB_DIR/deepspec/<exp_name>`（默认 `~/tensorboard`）。容器里 `~` 是
+> `/root`，不处理的话容器删除即丢。两种方式二选一：按上面 `-v` 挂载默认路径，
+> 或直接改位置：
+>
+> ```bash
+> DEEPSPEC_CKPT_DIR=/data/checkpoints DEEPSPEC_TB_DIR=/data/tensorboard \
+>     bash example/03_train.sh
+> ```
+>
+> （注意 `--opts "logging.checkpoint_dir=..."` 是无效的——`finalize_cfg` 在 opts
+> 之后执行并重算目录，所以本 fork 给所有 config 加了上述环境变量开关。）
 
 ## 流程
 

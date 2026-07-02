@@ -9,7 +9,9 @@ set -euo pipefail
 # which is not reliable through torch_npu; eager + SDPA is the validated
 # NPU path from upstream PR #9.
 #
-# Checkpoints land in ~/checkpoints/deepspec/<exp_name>/step_*.
+# Checkpoints land in $DEEPSPEC_CKPT_DIR/deepspec/<exp_name>/step_* (default
+# ~/checkpoints); tensorboard in $DEEPSPEC_TB_DIR/... (default ~/tensorboard).
+# Set the env vars to redirect both onto a data disk.
 
 config_path=${config_path:-config/dspark/dspark_qwen3_4b.py}
 cache_dir=${cache_dir:-${HOME}/.cache/deepspec/qwen3_4b_target_cache}
