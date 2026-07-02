@@ -28,6 +28,7 @@ train = dict(
     max_grad_norm=1.0,
     sharding_strategy="no_shard",
     torch_compile=False,
+    gradient_checkpointing=False,
 )
 
 logging = dict(

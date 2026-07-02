@@ -105,7 +105,14 @@ Target cache 存每 token 的多层 hidden states，是最大的开销，与样�
 - `DEEPSPEC_DEVICE=npu` 强制走 NPU 路径（自动检测通常也够，显式设置更保险）；设备可见性用 `ASCEND_RT_VISIBLE_DEVICES`；
 - NPU 上 attention 自动回退为 **SDPA + 稠密布尔 mask**（torch_npu 不支持 FlexAttention BlockMask），是正确性基线，训练吞吐低于 GPU 上的 FlexAttention，属预期；
 - `torch_compile` 在训练脚本里显式关闭（config 默认值面向 CUDA inductor）；
-- 分布式后端自动选 HCCL，无需手工配置。
+- 分布式后端自动选 HCCL，无需手工配置；
+- 显存不足（尤其 32GB 卡在 attention 处 OOM）时按序尝试：
+  `--opts "model.num_anchors=256"`（全词表激活减半）、
+  `--opts "train.sharding_strategy=full_shard"`（切分参数/优化器）、
+  `--opts "train.gradient_checkpointing=True"`（不保存逐层 attention 反向激活，
+  换 ~20% 重算开销）、`export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True`。
+  注意 `data.max_length` 只在建 cache 时生效，训练序列长度由 cache 决定——
+  想缩短序列必须重建 cache。
 
 ## 训练完之后：拉起 DeepSeek 模型做投机推理
 

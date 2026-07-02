@@ -176,6 +176,11 @@ class BaseTrainer:
                 precision_dtype=self.precision_dtype,
                 global_rank=self.global_rank,
             )
+        if self.args.train.get("gradient_checkpointing"):
+            print_on_local_main("Enabling gradient checkpointing on draft layers...")
+            self.draft_model.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False},
+            )
         self.model = self.draft_model
         if self.args.train.torch_compile:
             print_on_local_main("Compiling training model with torch.compile...")
