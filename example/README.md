@@ -36,12 +36,21 @@ docker run -it --name deepspec-train \
     -v /etc/ascend_install.info:/etc/ascend_install.info \
     -v <DeepSpec路径>:/workspace/DeepSpec \
     -v <大容量数据盘>:/data \
+    -v <大容量数据盘>/checkpoints:/root/checkpoints \
+    -v <大容量数据盘>/tensorboard:/root/tensorboard \
     quay.io/ascend/vllm-ascend:v0.18.0 bash
 ```
 
 进容器后跑 `bash example/00_setup_env.sh` 补齐仓库依赖（脚本会自动保留镜像里
 NPU 适配版的 torch，不会被 requirements.txt 覆盖）。target cache 记得放数据盘：
 `cache_dir=/data/deepspec/qwen3_4b_target_cache`。
+
+> **训练输出必须挂载出来**：train.py 把 checkpoint 写到 `~/checkpoints/deepspec/<exp_name>/step_*`
+> （`step_latest` 软链指向最新，训练重启会自动从它续训）、tensorboard 写到
+> `~/tensorboard/deepspec/<exp_name>`。容器里 `~` 是 `/root`，上面两行 `-v` 就是为了
+> 让它们落在宿主机数据盘上——漏挂的话容器删除即丢。路径前缀是 config 里的
+> `BASE_CKPT_DIR`/`BASE_TB_DIR` 常量，`--opts` 改不了（`finalize_cfg` 在 opts 之后执行
+> 且会重算目录），要改位置直接改 config 或按上面挂载。
 
 ## 流程
 
