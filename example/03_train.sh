@@ -13,9 +13,9 @@ set -euo pipefail
 # ~/checkpoints); tensorboard in $DEEPSPEC_TB_DIR/... (default ~/tensorboard).
 # Set the env vars to redirect both onto a data disk.
 
-config_path=${config_path:-config/dspark/dspark_qwen3_4b.py}
-cache_dir=${cache_dir:-${HOME}/.cache/deepspec/qwen3_4b_target_cache}
-exp_name=${exp_name:-dspark_block7_qwen3_4b_npu}
+config_path=${config_path:-config/dspark/dspark_qwen3_8b.py}
+cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/0702_test/hidden}
+exp_name=${exp_name:-dspark_block7_qwen3_8b_npu}
 
 # With 50k samples and global_batch_size 512, one epoch is ~100 steps; the
 # config default of 3000 would never checkpoint mid-run, so lower it here.
@@ -28,11 +28,18 @@ export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
 export MASTER_PORT=${MASTER_PORT:-29500}
 export RANK=${RANK:-0}
 export WORLD_SIZE=${WORLD_SIZE:-1}
+export DEEPSPEC_CKPT_DIR=/opt/w00958190/DeepSpec/0702_test/output
+export DEEPSPEC_TB_DIR=/opt/w00958190/DeepSpec/0702_test/tensorboard
+global_batch_size=${global_batch_size:-32}
 
 python train.py \
     --config "${config_path}" \
     --opts "data.target_cache_path=${cache_dir}" \
     --opts "train.torch_compile=False" \
     --opts "train.local_batch_size=${local_batch_size}" \
+    --opts "train.global_batch_size=${global_batch_size}" \
     --opts "logging.checkpointing_steps=${checkpointing_steps}" \
+    --opts "model.num_anchors=64" \
+    --opts "train.sharding_strategy=full_shard" \
+    --opts "data.max_length=512" \
     --opts "exp_name=${exp_name}"

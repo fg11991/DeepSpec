@@ -7,7 +7,7 @@ exp_name = "dspark_block7_qwen3_8b"
 seed = 42
 
 model = dict(
-    target_model_name_or_path="Qwen/Qwen3-8B",
+    target_model_name_or_path="/opt/foundation_model/Qwen3-8B",
     block_size=7,
     num_draft_layers=5,
     target_layer_ids=[1, 9, 17, 25, 33],

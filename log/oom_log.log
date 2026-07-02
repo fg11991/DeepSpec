@@ -1,0 +1,45 @@
+ettings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+/usr/local/python3.11.14/lib/python3.11/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+W0702 08:27:36.368000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27177 via signal SIGTERM
+W0702 08:27:36.369000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27178 via signal SIGTERM
+W0702 08:27:36.369000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27179 via signal SIGTERM
+W0702 08:27:36.369000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27180 via signal SIGTERM
+W0702 08:27:36.370000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27182 via signal SIGTERM
+W0702 08:27:36.370000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27183 via signal SIGTERM
+W0702 08:27:36.370000 27164 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 27184 via signal SIGTERM
+Traceback (most recent call last):
+  File "/opt/w00958190/DeepSpec/DeepSpec/train.py", line 46, in <module>
+    torch.multiprocessing.spawn(main, nprocs=device_count())
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 364, in spawn
+    return start_processes(fn, args, nprocs, join, daemon, start_method="spawn")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 320, in start_processes
+    while not context.join():
+              ^^^^^^^^^^^^^^
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 220, in join
+    raise ProcessRaisedException(msg, error_index, failed_process.pid)
+torch.multiprocessing.spawn.ProcessRaisedException:
+
+-- Process 4 terminated with the following error:
+Traceback (most recent call last):
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 95, in _wrap
+    fn(i, *args)
+  File "/opt/w00958190/DeepSpec/DeepSpec/train.py", line 38, in main
+    trainer.train()
+  File "/opt/w00958190/DeepSpec/DeepSpec/deepspec/trainer/base_trainer.py", line 376, in train
+    loss.backward()
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/_tensor.py", line 625, in backward
+    torch.autograd.backward(
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/autograd/__init__.py", line 354, in backward
+    _engine_run_backward(
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/autograd/graph.py", line 841, in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: NPU out of memory. Tried to allocate 4.42 GiB (NPU 4; 29.49 GiB total capacity; 19.37 GiB already allocated; 19.37 GiB current active; 4.28 GiB free; 24.04 GiB reserved in total by PyTorch) If reserved memory is >> allocated memory try setting max_split_size_mb to avoid fragmentation.
+
+[ERROR] 2026-07-02-08:27:37 (PID:27164, Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception
+[root@00829de56277 DeepSpec]# /usr/local/python3.11.14/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 105 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+
