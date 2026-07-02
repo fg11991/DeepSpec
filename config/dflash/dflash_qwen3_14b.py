@@ -43,6 +43,7 @@ train = dict(
     sharding_strategy="no_shard",
     torch_compile=True,
     gradient_checkpointing=False,
+    fsdp_auto_wrap=False,
 )
 
 logging = dict(

@@ -30,8 +30,16 @@ export RANK=${RANK:-0}
 export WORLD_SIZE=${WORLD_SIZE:-1}
 export DEEPSPEC_CKPT_DIR=/opt/w00958190/DeepSpec/0702_test/output
 export DEEPSPEC_TB_DIR=/opt/w00958190/DeepSpec/0702_test/tensorboard
+# Reduce allocator fragmentation (log showed 24.0 GiB reserved vs 19.4 GiB
+# allocated - a ~4.7 GiB fragmentation gap).
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
 global_batch_size=${global_batch_size:-32}
 
+# fsdp_auto_wrap: wrap each draft layer / embed / lm_head as its own FSDP
+# unit so backward reduce-scatters gradients layer by layer instead of
+# allocating one ~4.4 GiB whole-model gradient buffer (the OOM in
+# log/oom_log.log). gradient_checkpointing: recompute layer activations in
+# backward instead of keeping them alive.
 python train.py \
     --config "${config_path}" \
     --opts "data.target_cache_path=${cache_dir}" \
@@ -41,5 +49,7 @@ python train.py \
     --opts "logging.checkpointing_steps=${checkpointing_steps}" \
     --opts "model.num_anchors=64" \
     --opts "train.sharding_strategy=full_shard" \
+    --opts "train.fsdp_auto_wrap=True" \
+    --opts "train.gradient_checkpointing=True" \
     --opts "data.max_length=512" \
     --opts "exp_name=${exp_name}"

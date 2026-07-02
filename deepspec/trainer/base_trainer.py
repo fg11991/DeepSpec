@@ -54,8 +54,24 @@ _HYBRID_STRATEGIES = (
 )
 
 
+def _fsdp_auto_wrap_policy(module, recurse, nonwrapped_numel):
+    # Wrap each draft decoder layer, the (frozen) token embedding, and any
+    # module tagged with _fsdp_wrap (the frozen lm_head) as its own FSDP unit.
+    # Without this the whole model is one flat unit: the backward pass must
+    # allocate a gradient buffer for every parameter at once - including the
+    # frozen embed/lm_head - which alone is ~4.4 GiB for the Qwen3-8B draft.
+    del nonwrapped_numel
+    if recurse:
+        return True
+    from transformers.modeling_layers import GradientCheckpointingLayer
+
+    return isinstance(module, (GradientCheckpointingLayer, torch.nn.Embedding)) or bool(
+        getattr(module, "_fsdp_wrap", False)
+    )
+
+
 def _build_fsdp_kwargs(
-    *, sharding_strategy_name: str, precision_dtype, world_size: int
+    *, sharding_strategy_name: str, precision_dtype, world_size: int, auto_wrap: bool = False
 ) -> dict:
     sharding_strategy = _SHARDING_STRATEGIES[sharding_strategy_name]
     fsdp_kwargs = dict(
@@ -66,6 +82,8 @@ def _build_fsdp_kwargs(
         ),
         sharding_strategy=sharding_strategy,
     )
+    if auto_wrap:
+        fsdp_kwargs["auto_wrap_policy"] = _fsdp_auto_wrap_policy
     if sharding_strategy in _HYBRID_STRATEGIES:
         devices_per_node = device_count()
         fsdp_kwargs["device_mesh"] = init_device_mesh(
@@ -285,10 +303,16 @@ class BaseTrainer:
         raise NotImplementedError
 
     def _wrap_with_fsdp(self, model):
+        auto_wrap = bool(self.args.train.get("fsdp_auto_wrap"))
+        if auto_wrap:
+            lm_head = getattr(self.draft_model, "lm_head", None)
+            if lm_head is not None:
+                lm_head._fsdp_wrap = True
         fsdp_kwargs = _build_fsdp_kwargs(
             sharding_strategy_name=self.args.train.sharding_strategy,
             precision_dtype=self.precision_dtype,
             world_size=self.world_size,
+            auto_wrap=auto_wrap,
         )
         fsdp_kwargs["device_id"] = self.device
         return FSDP(model, **fsdp_kwargs)
