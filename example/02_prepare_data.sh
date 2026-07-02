@@ -23,6 +23,13 @@ model_path=${model_path:-Qwen/Qwen3-4B}
 config_path=${config_path:-config/dspark/dspark_qwen3_4b.py}
 num_samples=${num_samples:-50000}
 
+# Stage-3 knobs. data_max_length overrides the config's data.max_length for
+# the cache (shorter sequences = smaller cache + less training memory; the
+# training sequence length is fixed by the cache, not by train-time opts).
+# cache_local_batch_size: lower it on 32GB cards (target forward memory).
+data_max_length=${data_max_length:-}
+cache_local_batch_size=${cache_local_batch_size:-16}
+
 train_split_path=${train_split_path:-train_datasets/perfectblend_train.jsonl}
 train_data_path=${train_data_path:-train_datasets/qwen3_4b/perfectblend_train_regen.jsonl}
 cache_dir=${cache_dir:-${HOME}/.cache/deepspec/qwen3_4b_target_cache}
@@ -77,11 +84,18 @@ echo "Stage 3/3: build target cache under ${cache_dir}"
 echo "  Input: ${train_data_path}"
 echo "  Stop the vllm servers first - this stage runs the target model on all NPUs."
 echo "  Rough disk usage: ~30 KB per token (~1.5 TB at 50k samples)."
-python scripts/data/prepare_target_cache.py \
-    --config "${config_path}" \
-    --train-data-path "${train_data_path}" \
-    --output-dir "${cache_dir}" \
-    --local-batch-size 16
+echo "  Note: the output dir must be new/empty (the script refuses to overwrite)."
+cache_cmd=(
+    python scripts/data/prepare_target_cache.py
+    --config "${config_path}"
+    --train-data-path "${train_data_path}"
+    --output-dir "${cache_dir}"
+    --local-batch-size "${cache_local_batch_size}"
+)
+if [[ -n "${data_max_length}" ]]; then
+    cache_cmd+=(--opts "data.max_length=${data_max_length}")
+fi
+"${cache_cmd[@]}"
 
 echo "Done. Target cache: ${cache_dir}"
 fi
