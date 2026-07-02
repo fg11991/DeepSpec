@@ -10,13 +10,21 @@ set -euo pipefail
 # Stage 2 (answer regeneration) needs the target servers from
 # 01_launch_target_server.sh running. Stop them before stage 3, which
 # occupies all NPUs itself.
+#
+# `stages` selects which stages run (default all). Common cases:
+#   stages=3  train_data_path=/path/to/yours.jsonl   # own JSONL with usable
+#             # answers: build the cache directly (cache size scales with the
+#             # file; subsample with `head -n N` first)
+#   stages=23 train_split_path=/path/to/prompts.jsonl # own prompts: regenerate
+#             # answers with the target model (on-policy), then build the cache
 
+stages=${stages:-123}
 model_path=${model_path:-Qwen/Qwen3-4B}
 config_path=${config_path:-config/dspark/dspark_qwen3_4b.py}
 num_samples=${num_samples:-50000}
 
-train_split_path=train_datasets/perfectblend_train.jsonl
-train_data_path=train_datasets/qwen3_4b/perfectblend_train_regen.jsonl
+train_split_path=${train_split_path:-train_datasets/perfectblend_train.jsonl}
+train_data_path=${train_data_path:-train_datasets/qwen3_4b/perfectblend_train_regen.jsonl}
 cache_dir=${cache_dir:-${HOME}/.cache/deepspec/qwen3_4b_target_cache}
 
 server_host=${server_host:-127.0.0.1}
@@ -35,6 +43,7 @@ for ((worker_id = 0; worker_id < num_workers; worker_id++)); do
     server_addresses+=("${server_host}:$((start_port + worker_id))")
 done
 
+if [[ "${stages}" == *1* ]]; then
 echo "Stage 1/3: download and split mlabonne/open-perfectblend"
 python scripts/data/download_and_split.py \
     --dataset-name mlabonne/open-perfectblend \
@@ -42,7 +51,9 @@ python scripts/data/download_and_split.py \
     --train-output-path "${train_split_path}" \
     --test-output-dir eval_datasets \
     --skip-existing
+fi
 
+if [[ "${stages}" == *2* ]]; then
 echo "Stage 2/3: regenerate answers with ${model_path} (${num_samples} samples)"
 echo "  (requires the servers from example/01_launch_target_server.sh)"
 python scripts/data/generate_train_data.py \
@@ -59,10 +70,13 @@ python scripts/data/generate_train_data.py \
     --resume \
     --input-file-path "${train_split_path}" \
     --output-file-path "${train_data_path}"
+fi
 
+if [[ "${stages}" == *3* ]]; then
 echo "Stage 3/3: build target cache under ${cache_dir}"
+echo "  Input: ${train_data_path}"
 echo "  Stop the vllm servers first - this stage runs the target model on all NPUs."
-echo "  Rough disk usage: ~1.5 TB at 50k samples, scaling linearly."
+echo "  Rough disk usage: ~30 KB per token (~1.5 TB at 50k samples)."
 python scripts/data/prepare_target_cache.py \
     --config "${config_path}" \
     --train-data-path "${train_data_path}" \
@@ -70,3 +84,4 @@ python scripts/data/prepare_target_cache.py \
     --local-batch-size 16
 
 echo "Done. Target cache: ${cache_dir}"
+fi
