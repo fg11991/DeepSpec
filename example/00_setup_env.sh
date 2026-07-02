@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Environment setup for DSpark training on a single node with 8x Ascend 910B.
+# Environment setup for DSpark training on a single node with 8x Ascend 910B/910C.
 #
-# Prerequisites (install these first, they are machine-specific):
-#   1. Ascend driver + firmware (check with: npu-smi info)
-#   2. CANN toolkit + kernels (this script sources its env below)
-# See https://www.hiascend.com/developer for CANN downloads. torch_npu 2.9.x
-# requires a matching CANN 8.x — check the compatibility table in the
-# torch_npu release notes: https://github.com/Ascend/pytorch
+# Recommended: run inside the official vllm-ascend image, which ships CANN,
+# torch/torch_npu 2.9.0.post1, and vllm pre-installed and matched:
+#
+#   quay.io/ascend/vllm-ascend:v0.18.0
+#
+# (See example/README.md for the docker run command.) Inside that image this
+# script only installs the remaining repo dependencies. On a bare host you
+# need Ascend driver + firmware (npu-smi info) and CANN 8.5.x first; see
+# https://www.hiascend.com/developer and the torch_npu compatibility table
+# at https://github.com/Ascend/pytorch
 
-# Source CANN environment.
+# Source CANN environment when present (bare host; images do this already).
 ASCEND_TOOLKIT_HOME=${ASCEND_TOOLKIT_HOME:-/usr/local/Ascend/ascend-toolkit}
 if [[ -f "${ASCEND_TOOLKIT_HOME}/set_env.sh" ]]; then
     # shellcheck disable=SC1091
     source "${ASCEND_TOOLKIT_HOME}/set_env.sh"
-else
-    echo "WARNING: ${ASCEND_TOOLKIT_HOME}/set_env.sh not found; install CANN first." >&2
 fi
 
-# Repo dependencies. requirements.txt pins torch==2.9.1 (CPU/CUDA wheel is
-# fine as the base; torch_npu plugs in as a backend).
-python -m pip install -r requirements.txt
-
-# torch_npu must match the torch minor version (2.9.x).
-python -m pip install 'torch_npu==2.9.1'
-
-# Inference engine for the data-regeneration step (01/02 scripts).
-# vllm-ascend is the community plugin for running vLLM on Ascend NPU:
-#   https://github.com/vllm-project/vllm-ascend
-# Pin compatible vllm/vllm-ascend versions per its README if the latest pair
-# conflicts with torch 2.9.1.
-python -m pip install vllm vllm-ascend
+if python -c 'import torch_npu' 2> /dev/null; then
+    # torch/torch_npu already provided (e.g. vllm-ascend image). Install repo
+    # deps but keep the image's NPU-adapted torch: the repo pin (2.9.1) and
+    # the image build (2.9.0.post1) are both torch 2.9.x.
+    echo "torch_npu detected; keeping existing torch/torch_npu."
+    grep -v '^torch==' requirements.txt | python -m pip install -r /dev/stdin
+else
+    # Bare host: install repo deps, then the matching torch_npu 2.9.x build.
+    python -m pip install -r requirements.txt
+    python -m pip install 'torch_npu>=2.9.0,<2.10'
+    # Inference engine for the data-regeneration step (01/02 scripts):
+    #   https://github.com/vllm-project/vllm-ascend
+    # Pin a vllm/vllm-ascend pair compatible with torch 2.9.x per its docs.
+    python -m pip install vllm vllm-ascend
+fi
 
 # Sanity check: NPU visible and usable.
 python - << 'EOF'

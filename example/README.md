@@ -10,10 +10,43 @@
 
 跑通 4B 之后，换 `config/dspark/dspark_qwen3_8b.py` / `dspark_qwen3_14b.py` 只需改 `config_path` 和 `model_path` 两个变量。
 
+## 推荐镜像
+
+推荐直接用 vllm-ascend 官方镜像，训练、数据再生成、之后的推理部署共用一个环境：
+
+```text
+quay.io/ascend/vllm-ascend:v0.18.0
+```
+
+自带 CANN 8.5.1 + torch/torch_npu 2.9.0.post1 + vllm，与本仓库锁的 torch 2.9.x 同系。
+910B（A2）和 910C（A3）用同一镜像。启动示例：
+
+```bash
+docker run -it --name deepspec-train \
+    --device /dev/davinci0 --device /dev/davinci1 \
+    --device /dev/davinci2 --device /dev/davinci3 \
+    --device /dev/davinci4 --device /dev/davinci5 \
+    --device /dev/davinci6 --device /dev/davinci7 \
+    --device /dev/davinci_manager \
+    --device /dev/devmm_svm \
+    --device /dev/hisi_hdc \
+    -v /usr/local/dcmi:/usr/local/dcmi \
+    -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+    -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+    -v /etc/ascend_install.info:/etc/ascend_install.info \
+    -v <DeepSpec路径>:/workspace/DeepSpec \
+    -v <大容量数据盘>:/data \
+    quay.io/ascend/vllm-ascend:v0.18.0 bash
+```
+
+进容器后跑 `bash example/00_setup_env.sh` 补齐仓库依赖（脚本会自动保留镜像里
+NPU 适配版的 torch，不会被 requirements.txt 覆盖）。target cache 记得放数据盘：
+`cache_dir=/data/deepspec/qwen3_4b_target_cache`。
+
 ## 流程
 
 ```bash
-# 0. 环境：CANN + torch_npu + 依赖 + vllm-ascend（数据再生成用）
+# 0. 环境：镜像内补齐依赖（裸机则安装 torch_npu + vllm-ascend）
 bash example/00_setup_env.sh
 
 # 1. 【终端 A】起 8 个单卡 vllm 服务，供第 2 步再生成答案
