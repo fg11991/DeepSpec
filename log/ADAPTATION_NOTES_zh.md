@@ -160,19 +160,22 @@ max_length/target_layer_ids/num_samples 符合预期。
 
 ## 五、提交索引
 
+（2026-07-02 重写过提交作者信息为 w00958190 <wuyidong5@huawei.com>，hash 为重写后的值。）
+
 | commit | 内容 |
 | --- | --- |
-| f80e14a | 合入上游 PR #9（NPU 支持），rebase 到最新 main |
-| 34c2558 | example/ 端到端脚本（8 卡 NPU，Qwen3-4B 起步） |
-| 2cf2242 | 推荐 vllm-ascend v0.18.0 镜像；setup 脚本保留镜像 torch |
-| 76c384b | docs/CODE_GUIDE_zh.md 代码阅读指南 |
-| 37a9e20 | 02 脚本 stages 阶段选择 |
-| 041a8ce | 输出位置文档 + docker 挂载 |
-| 4fe1e31 | DEEPSPEC_CKPT_DIR/TB_DIR 环境变量（12 个 config） |
-| a28b84d | train.gradient_checkpointing 接线 |
-| cbb4530 | 02 脚本 data_max_length / cache_local_batch_size |
-| 7b6659d | train.fsdp_auto_wrap 逐层 FSDP 包装（根治 backward 4.42GiB OOM）+ 修 02 脚本冲突标记 |
-| df83692 | 续训分片布局指纹校验 |
+| feebf8e | 合入上游 PR #9（NPU 支持），rebase 到最新 main |
+| bf75fa5 | example/ 端到端脚本（8 卡 NPU，Qwen3-4B 起步） |
+| 7266f50 | 推荐 vllm-ascend v0.18.0 镜像；setup 脚本保留镜像 torch |
+| cc20557 | docs/CODE_GUIDE_zh.md 代码阅读指南 |
+| e05db4d | 02 脚本 stages 阶段选择 |
+| 57c3379 | 输出位置文档 + docker 挂载 |
+| 809baeb | DEEPSPEC_CKPT_DIR/TB_DIR 环境变量（12 个 config） |
+| 631e55c | train.gradient_checkpointing 接线 |
+| b2af30f | 02 脚本 data_max_length / cache_local_batch_size |
+| 46024e1 | train.fsdp_auto_wrap 逐层 FSDP 包装（根治 backward 4.42GiB OOM）+ 修 02 脚本冲突标记 |
+| 7739a49 | 续训分片布局指纹校验 |
+| 47170da | 本工作记录 |
 
 后续方向：NPU 原生块状稀疏 attention（FlexAttention 替代，训练側性能）、
 vllm-ascend DSpark 推理适配（RFC vllm-project/vllm-ascend#11163，尚无代码）、
