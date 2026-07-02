@@ -49,7 +49,9 @@ python train.py \
     --opts "logging.checkpointing_steps=${checkpointing_steps}" \
     --opts "model.num_anchors=64" \
     --opts "train.sharding_strategy=full_shard" \
-    --opts "train.fsdp_auto_wrap=True" \
     --opts "train.gradient_checkpointing=True" \
     --opts "data.max_length=512" \
     --opts "exp_name=${exp_name}"
+
+
+    # --opts "train.fsdp_auto_wrap=True" \

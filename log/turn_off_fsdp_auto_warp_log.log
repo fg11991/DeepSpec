@@ -1,0 +1,47 @@
+/site-packages/torch/optim/lr_scheduler.py:1090: UserWarning: To get the last learning rate computed by the scheduler, please use `get_last_lr()`.
+  _warn_get_lr_called_within_step(self)
+W0702 08:48:22.449000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31481 via signal SIGTERM
+W0702 08:48:22.450000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31482 via signal SIGTERM
+W0702 08:48:22.450000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31483 via signal SIGTERM
+W0702 08:48:22.451000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31484 via signal SIGTERM
+W0702 08:48:22.451000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31485 via signal SIGTERM
+W0702 08:48:22.451000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31487 via signal SIGTERM
+W0702 08:48:22.452000 31468 site-packages/torch/multiprocessing/spawn.py:174] Terminating process 31488 via signal SIGTERM
+Traceback (most recent call last):
+  File "/opt/w00958190/DeepSpec/DeepSpec/train.py", line 46, in <module>
+    torch.multiprocessing.spawn(main, nprocs=device_count())
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 364, in spawn
+    return start_processes(fn, args, nprocs, join, daemon, start_method="spawn")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 320, in start_processes
+    while not context.join():
+              ^^^^^^^^^^^^^^
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 220, in join
+    raise ProcessRaisedException(msg, error_index, failed_process.pid)
+torch.multiprocessing.spawn.ProcessRaisedException:
+
+-- Process 5 terminated with the following error:
+Traceback (most recent call last):
+  File "/usr/local/python3.11.14/lib/python3.11/site-packages/torch/multiprocessing/spawn.py", line 95, in _wrap
+    fn(i, *args)
+  File "/opt/w00958190/DeepSpec/DeepSpec/train.py", line 37, in main
+    trainer = args.train.trainer_cls(local_rank, args)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/w00958190/DeepSpec/DeepSpec/deepspec/trainer/base_trainer.py", line 240, in __init__
+    resume_state = load_training_state(
+                   ^^^^^^^^^^^^^^^^^^^^
+  File "/opt/w00958190/DeepSpec/DeepSpec/deepspec/trainer/ckpt_manager.py", line 100, in load_training_state
+    optimizer.load_state_dict(checkpoint["optimizer"])
+  File "/opt/w00958190/DeepSpec/DeepSpec/deepspec/utils/optim.py", line 136, in load_state_dict
+    dst.data.copy_(src.to(dst.device))
+RuntimeError: copy_d2d_baseformat_opapi:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:90 NPU function error: call aclnnInplaceCopy failed, error code is 161002
+[ERROR] 2026-07-02-08:48:17 (PID:31486, Device:5, RankID:0) ERR00100 PTA call acl api failed.
+[PID: 31486] 2026-07-02-08:48:17.743.189 AclNN_Parameter_Error(EZ1001): 0 and 4464443 cannot broadcast.
+        TraceBack (most recent call last):
+        The size of tensor self [4464443] must match the size of tensor src [0].
+
+
+[root@00829de56277 DeepSpec]# /usr/local/python3.11.14/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 4 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+
+
