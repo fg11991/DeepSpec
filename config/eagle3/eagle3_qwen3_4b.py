@@ -1,8 +1,8 @@
 import os
 from deepspec.trainer import Qwen3Eagle3Trainer
 
-BASE_TB_DIR = os.path.expanduser("~/tensorboard")
-BASE_CKPT_DIR = os.path.expanduser("~/checkpoints")
+BASE_TB_DIR = os.path.expanduser(os.environ.get("DEEPSPEC_TB_DIR", "~/tensorboard"))
+BASE_CKPT_DIR = os.path.expanduser(os.environ.get("DEEPSPEC_CKPT_DIR", "~/checkpoints"))
 project_name = "deepspec"
 exp_name = "eagle3_ttt7_qwen3_4b"
 seed = 0
@@ -28,6 +28,8 @@ train = dict(
     max_grad_norm=1.0,
     sharding_strategy="no_shard",
     torch_compile=False,
+    gradient_checkpointing=False,
+    fsdp_auto_wrap=False,
 )
 
 logging = dict(

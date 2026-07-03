@@ -12,10 +12,12 @@ from torch.distributed.fsdp import FullStateDictConfig, StateDictType
 
 from deepspec.utils import (
     ensure_dir,
+    get_rng_state,
     is_global_main_process,
     print_on_global_main,
     print_on_local_main,
     safe_symlink,
+    set_rng_state,
 )
 
 
@@ -90,11 +92,22 @@ def load_training_state(
     local_batch_size: int,
     gradient_accumulation_steps: int,
     micro_batches_per_epoch: int,
+    sharding_layout: dict | None = None,
 ) -> TrainingResumeState:
     state_path = _rank_training_state_path(resume_checkpoint_dir, global_rank)
     assert os.path.exists(state_path)
 
     checkpoint = torch.load(state_path, map_location="cpu", weights_only=False)
+    saved_layout = checkpoint.get("sharding_layout")
+    if sharding_layout is not None and saved_layout is not None:
+        assert saved_layout == sharding_layout, (
+            "Cannot resume: checkpoint optimizer state was saved with a "
+            f"different FSDP sharding layout ({saved_layout}) than the current "
+            f"run ({sharding_layout}). The per-rank optimizer shards are "
+            "layout-specific. Start fresh with a new exp_name (or remove "
+            "step_latest); the model weights in the checkpoint are "
+            "layout-independent and can still be loaded via from_pretrained."
+        )
     optimizer.load_state_dict(checkpoint["optimizer"])
 
     next_micro_step = int(checkpoint["next_micro_step"])
@@ -112,7 +125,9 @@ def load_training_state(
     assert saved_local_batch_size == int(local_batch_size)
 
     torch.set_rng_state(checkpoint["torch_rng"])
-    torch.cuda.set_rng_state(checkpoint["torch_cuda_rng"])
+    rng_state = checkpoint.get("torch_accelerator_rng", checkpoint.get("torch_cuda_rng"))
+    if rng_state is not None:
+        set_rng_state(rng_state)
     np.random.set_state(checkpoint["numpy_rng"])
     random.setstate(checkpoint["python_rng"])
 
@@ -170,6 +185,10 @@ def save_checkpoint(
         world_size=world_size,
         local_batch_size=local_batch_size,
     )
+    training_state["sharding_layout"] = {
+        "sharding_strategy": str(train_config.train.sharding_strategy),
+        "fsdp_auto_wrap": bool(train_config.train.get("fsdp_auto_wrap")),
+    }
     torch.save(
         training_state,
         _rank_training_state_path(checkpoint_dir, global_rank),
@@ -213,7 +232,7 @@ def _serialize_training_state(
         "world_size": int(world_size),
         "local_batch_size": int(local_batch_size),
         "torch_rng": torch.get_rng_state(),
-        "torch_cuda_rng": torch.cuda.get_rng_state(),
+        "torch_accelerator_rng": get_rng_state(),
         "numpy_rng": np.random.get_state(),
         "python_rng": random.getstate(),
     }
