@@ -42,8 +42,33 @@ def parse_args():
     parser.add_argument("--tensorboard-dir", type=str, default=None)
     parser.add_argument("--step", type=int, default=None,help=("step for tensorboard logging"),)
     parser.add_argument("--seed", type=int, default=980406)
+    parser.add_argument(
+        "--tasks",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated subset of eval datasets to run (e.g. 'gsm8k' or "
+            "'gsm8k,humaneval'). Default: all. Available: "
+            + ", ".join(name for name, _ in TASKS)
+        ),
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Cap samples per dataset (overrides the per-task default). Use a small value to smoke-test.",
+    )
     args = parser.parse_args()
-    args.tasks = list(TASKS)
+    tasks = list(TASKS)
+    if args.tasks is not None:
+        wanted = [name.strip() for name in args.tasks.split(",") if name.strip()]
+        available = {name for name, _ in TASKS}
+        unknown = [name for name in wanted if name not in available]
+        assert not unknown, f"Unknown --tasks {unknown}; available: {sorted(available)}"
+        tasks = [(name, cap) for name, cap in tasks if name in wanted]
+    if args.max_samples is not None:
+        tasks = [(name, int(args.max_samples)) for name, _ in tasks]
+    args.tasks = tasks
     return args
 
 
