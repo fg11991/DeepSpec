@@ -14,8 +14,8 @@ set -euo pipefail
 # Set the env vars to redirect both onto a data disk.
 
 config_path=${config_path:-config/dspark/dspark_qwen3_8b.py}
-cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/0702_test/hidden}
-exp_name=${exp_name:-dspark_block7_qwen3_8b_npu}
+cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/0702_test/hidden_ultrachat_small_4096}
+exp_name=${exp_name:-dspark_block7_qwen3_8b_npu_4096_256anchors}
 
 # With 50k samples and global_batch_size 512, one epoch is ~100 steps; the
 # config default of 3000 would never checkpoint mid-run, so lower it here.
@@ -33,7 +33,7 @@ export DEEPSPEC_TB_DIR=/opt/w00958190/DeepSpec/0702_test/tensorboard
 # Reduce allocator fragmentation (log showed 24.0 GiB reserved vs 19.4 GiB
 # allocated - a ~4.7 GiB fragmentation gap).
 export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-global_batch_size=${global_batch_size:-32}
+global_batch_size=${global_batch_size:-64}
 
 # fsdp_auto_wrap: wrap each draft layer / embed / lm_head as its own FSDP
 # unit so backward reduce-scatters gradients layer by layer instead of
@@ -47,10 +47,10 @@ python train.py \
     --opts "train.local_batch_size=${local_batch_size}" \
     --opts "train.global_batch_size=${global_batch_size}" \
     --opts "logging.checkpointing_steps=${checkpointing_steps}" \
-    --opts "model.num_anchors=64" \
+    --opts "model.num_anchors=256" \
     --opts "train.sharding_strategy=full_shard" \
     --opts "train.gradient_checkpointing=True" \
-    --opts "data.max_length=512" \
+    --opts "data.max_length=4096" \
     --opts "exp_name=${exp_name}"
 
 

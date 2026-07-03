@@ -32,12 +32,12 @@ num_samples=${num_samples:-50000}
 # the cache (shorter sequences = smaller cache + less training memory; the
 # training sequence length is fixed by the cache, not by train-time opts).
 # cache_local_batch_size: lower it on 32GB cards (target forward memory).
-data_max_length=${data_max_length:-512}
+data_max_length=${data_max_length:-4096}
 cache_local_batch_size=${cache_local_batch_size:-16}
 
 train_split_path=${train_split_path:-train_datasets/perfectblend_train.jsonl}
 train_data_path=${train_data_path:-/opt/w00958190/DeepSpec/0702_test/dataset/ultrachat_train_small.jsonl}
-cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/0702_test/hidden}
+cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/0702_test/hidden_ultrachat_small_4096}
 
 server_host=${server_host:-127.0.0.1}
 num_workers=${num_workers:-8}

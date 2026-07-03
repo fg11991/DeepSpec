@@ -9,8 +9,8 @@ set -euo pipefail
 # per benchmark. The released deepseek-ai/dspark_qwen3_4b_block7 checkpoint
 # is the reference point for a fully-trained draft.
 
-target_name_or_path=${target_name_or_path:-Qwen/Qwen3-4B}
-draft_name_or_path=${draft_name_or_path:-${HOME}/checkpoints/deepspec/dspark_block7_qwen3_4b_npu/step_latest}
+target_name_or_path=${target_name_or_path:-/opt/foundation_model/Qwen3-8B}
+draft_name_or_path=${draft_name_or_path:-/opt/w00958190/DeepSpec/0702_test/output/deepspec/dspark_block7_qwen3_8b_npu_4096_256anchors/step_latest}
 
 export DEEPSPEC_DEVICE=npu
 export ASCEND_RT_VISIBLE_DEVICES=${ASCEND_RT_VISIBLE_DEVICES:-0,1,2,3}
