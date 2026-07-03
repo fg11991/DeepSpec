@@ -2,7 +2,7 @@
 
 fork：`fg11991/DeepSpec`，分支 `npu-support`（基于 `deepseek-ai/DeepSpec` main）。
 目标：在昇腾 NPU（910B/910C，含 32GB 的 910B4）上跑通 DSpark draft 模型训练全链路。
-记录截至 2026-07-02。
+记录截至 2026-07-03。
 
 ---
 
@@ -92,12 +92,36 @@ auto_wrap_policy，整个模型是一个 flat 单元，反向须一次性分配�
 world_size+sharding_strategy+fsdp_auto_wrap 三元组**；step_N 里的模型 safetensors
 布局无关，可随意加载。
 
-### 6. 文档
+### 6. Eval 进度输出 + 数据集/样本选择
 
-- `docs/CODE_GUIDE_zh.md`：代码阅读指南（模块一 prepare hidden / 模块二 training，
+为什么：eval 从「loading weights」到第一个数据集**整个跑完**之间零输出，一条
+gsm8k 要闷头生成 500 条，看起来像卡死；且无法只跑单个数据集做冒烟。
+
+作用：`run_dataset` 打印每数据集表头 + rank0 逐样本进度（累计耗时、s/sample）;
+`eval.py` 加 `--tasks`（逗号分隔子集）和 `--max-samples`（每集上限），配
+`--max-new-tokens` 可秒级冒烟。注意 `--max-samples` 减的是样本条数不是每条耗时。
+
+### 7. tige/ 多节点平台脚本 + Qwen3-32B config
+
+为什么：要在训练平台（910C 集群）上多节点跑，且需要 Qwen3-32B target。
+
+- **多节点机制**：DeepSpec **不用 torchrun**，用自己的启动器——`RANK`=节点号、
+  `WORLD_SIZE`=**节点数**，每节点 spawn 每卡一 worker，全局 rank =
+  `NODE_RANK*8+local_rank`。prepare/train 支持多节点；eval 设单节点 8 卡。
+- `example/tige/`：`_common_env.sh`（NNODES/NODE_RANK→RANK/WORLD_SIZE 映射、HCCL
+  超时、输出目录）+ 6 个脚本（8B/32B 各 prepare_hidden/train/eval）。
+- `config/dspark/dspark_qwen3_32b.py`：照 8B 改，64 层 / hidden 5120，
+  `target_layer_ids=[1,16,31,46,61]`（步长 15、避开最终层 63）。
+- **32B 硬约束**：训练没问题（target 不驻留，draft 经 full_shard+auto_wrap 分片）；
+  但 **prepare_hidden 和 eval 每卡要整份加载 61GB 的 32B target（无 TP）**，
+  32/64GB 卡都装不下，多节点也救不了——需大卡或给这两步加 device_map 切分。
+
+### 8. 文档
+
+- `docs/CODE_GUIDE_zh.md`：代码阅读指南（模块一 prepare hidden / 模块二 training,
   含仓库结构、关键行号、建议阅读顺序）。
-- `example/README.md`：镜像、docker run（含输出目录挂载）、磁盘预算、OOM 处置
-  阶梯、数据格式要点。
+- `example/README.md`、`example/tige/README.md`：镜像、docker run、多节点跑法、
+  磁盘预算、OOM 处置阶梯、数据格式要点。
 
 ---
 
@@ -180,3 +204,29 @@ max_length/target_layer_ids/num_samples 符合预期。
 后续方向：NPU 原生块状稀疏 attention（FlexAttention 替代，训练側性能）、
 vllm-ascend DSpark 推理适配（RFC vllm-project/vllm-ascend#11163，尚无代码）、
 更大 target 的 cache 生成跨卡切分（device_map）。
+
+---
+
+## 六、支持范围与已知限制
+
+- **target 架构**：DeepSpec 只实现了 **Qwen3 和 Gemma4** 两个家族（dspark 与
+  eagle3 各有对应 modeling/trainer/evaluator）。`deepspec/` 和 `config/` 里
+  **没有任何 DeepSeek / MLA / MoE-attention 代码**。
+- **不能训练 DeepSeek target 的 draft**：draft 模型是按家族写死的类
+  （`Qwen3DSparkModel` 等），用该家族的 decoder 层。要支持 DeepSeek 需新增
+  `modeling/dspark/deepseek/{config,modeling}.py` + `DeepSeekDSparkTrainer` +
+  evaluator + config，并在 `trainer/__init__.py`、`eval.py` 的 `EVALUATORS`
+  注册。好在 draft 可做**稠密**网络（参考 gemma4 对 MoE target 的
+  `enable_moe_block=False` 处理），不必复刻 MLA/MoE。
+- **cache 侧是架构无关的**：`prepare_target_cache.py` 用 `AutoModel` 加载 target，
+  理论上能抓 DeepSeek 的 hidden states（受显存限制）——瓶颈只在 draft 侧。
+- 官方已放出 DeepSeek-V4-Flash/Pro 的 DSpark draft 权重，但那是 DeepSeek 内部
+  代码训练的；公开的 DeepSpec 未包含 DeepSeek modeling。
+
+---
+
+## 附：分支
+
+- `npu-support`：完整迭代历史（含调试提交与调试日志）。
+- `npu-support-clean`：以 main 为基、按适配主题整理成 8 个独立提交的干净分支，
+  已剔除调试文件与含凭据的参考脚本，example 脚本路径通用化。对外分享/提 PR 用它。
