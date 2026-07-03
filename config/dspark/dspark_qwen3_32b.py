@@ -10,13 +10,13 @@ model = dict(
     target_model_name_or_path="Qwen/Qwen3-32B",
     block_size=7,
     num_draft_layers=5,
-    # Qwen3-32B has 64 decoder layers (vs 36 for Qwen3-8B). These 5 ids mirror
-    # the fractional depths of the 8B config's [1,9,17,25,33]/35 spread across
-    # 64 layers, and deliberately exclude the final layer (63): eval forbids it
-    # (base_evaluator.assert_no_final_target_layer) because the last layer's
-    # hidden state is captured separately as target_last_hidden_states. Tune if
-    # needed, but the cache and draft checkpoint must be rebuilt on any change.
-    target_layer_ids=[2, 16, 31, 45, 59],
+    # Qwen3-32B has 64 decoder layers (vs 36 for Qwen3-8B). These 5 ids are
+    # evenly spaced (step 15) across the depth and deliberately exclude the
+    # final layer (63): eval forbids it (base_evaluator.assert_no_final_target_layer)
+    # because the last layer's hidden state is captured separately as
+    # target_last_hidden_states. Tune if needed, but the cache and draft
+    # checkpoint must be rebuilt on any change.
+    target_layer_ids=[1, 16, 31, 46, 61],
     mask_token_id=151669,
     num_anchors=512,
 
