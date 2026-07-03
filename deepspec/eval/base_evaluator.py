@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -527,7 +528,16 @@ class BaseEvaluator:
 
         stop_token_ids = resolve_stop_token_ids(self.target_model, self.tokenizer)
         responses = []
-        for idx in range(self.global_rank, len(dataset), self.world_size):
+        local_indices = list(range(self.global_rank, len(dataset), self.world_size))
+        local_total = len(local_indices)
+        if self.global_rank == 0:
+            print(
+                f"[eval] dataset={dataset_name} samples={len(dataset)} "
+                f"world_size={self.world_size} (~{local_total}/rank), generating...",
+                flush=True,
+            )
+        start_time = time.time()
+        for local_pos, idx in enumerate(local_indices):
             seed_all(int(self.args.seed) + idx)
             instance = dataset[idx]
             messages = [{"role": "user", "content": instance["turns"][0]}]
@@ -544,6 +554,14 @@ class BaseEvaluator:
                     stop_token_ids=stop_token_ids,
                 )
             )
+            if self.global_rank == 0:
+                done = local_pos + 1
+                elapsed = time.time() - start_time
+                print(
+                    f"[eval] {dataset_name} rank0 {done}/{local_total} "
+                    f"({elapsed:.0f}s, {elapsed / done:.1f}s/sample)",
+                    flush=True,
+                )
 
         return responses
 
