@@ -186,9 +186,12 @@ def _init_dist_single_process():
     # One model-parallel replica per node; nodes are data-parallel. Mirrors the
     # RANK/WORLD_SIZE = node_rank/node_count contract of utils.init_dist, but
     # with a single process per node (device_map spans the node's cards).
-    node_rank = int(os.environ["RANK"])
-    node_world_size = int(os.environ["WORLD_SIZE"])
-    init_method = f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
+    # Defaults make single-node runs work without exporting anything.
+    node_rank = int(os.environ.get("RANK", "0"))
+    node_world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+    master_port = os.environ.get("MASTER_PORT", "29500")
+    init_method = f"tcp://{master_addr}:{master_port}"
     set_device(0)
     dist.init_process_group(
         backend=accelerator_backend(),
