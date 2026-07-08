@@ -1,5 +1,8 @@
 from deepspec.data import CacheCollator
-from deepspec.modeling.dspark.gemma4 import Gemma4DSparkModel
+try:
+    from deepspec.modeling.dspark.gemma4 import Gemma4DSparkModel
+except ImportError:
+    Gemma4DSparkModel = None
 from deepspec.modeling.dspark.gemma4.config import (
     build_draft_config as build_gemma4_draft_config,
 )

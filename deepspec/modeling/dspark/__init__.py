@@ -1,5 +1,8 @@
 from .common import DSparkForwardOutput, extract_context_feature
-from .gemma4 import Gemma4DSparkModel
+try:
+    from .gemma4 import Gemma4DSparkModel
+except ImportError:
+    Gemma4DSparkModel = None
 from .qwen3 import Qwen3DSparkModel
 
 __all__ = [
