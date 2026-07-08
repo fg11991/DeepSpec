@@ -22,6 +22,10 @@ num_samples=${num_samples:-50000}
 # change it. cache_local_batch_size: lower it on 32GB cards (target forward).
 data_max_length=${data_max_length:-4096}
 cache_local_batch_size=${cache_local_batch_size:-8}
+# tp_size>1: shard a large target across tp_size cards (one worker per node) so
+# targets bigger than a single card (e.g. Qwen3-32B) fit. Default 1 = one
+# worker per card (data parallel).
+tp_size=${tp_size:-1}
 
 train_split_path=${train_split_path:-train_datasets/perfectblend_train.jsonl}
 train_data_path=${train_data_path:-train_datasets/qwen3_8b/perfectblend_train_regen.jsonl}
@@ -84,6 +88,7 @@ cache_cmd=(
     --train-data-path "${train_data_path}"
     --output-dir "${cache_dir}"
     --local-batch-size "${cache_local_batch_size}"
+    --tp-size "${tp_size}"
 )
 if [[ -n "${data_max_length}" ]]; then
     cache_cmd+=(--opts "data.max_length=${data_max_length}")

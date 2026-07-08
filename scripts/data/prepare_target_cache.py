@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+from datetime import timedelta
 import json
 import os
 
@@ -26,6 +27,7 @@ from deepspec.data.target_cache_dataset import (
 from deepspec.data.jsonl_dataset import JsonLineDataset
 from deepspec.utils import (
     CustomJSONEncoder,
+    accelerator_backend,
     device_count,
     empty_cache,
     get_git_diff,
@@ -34,10 +36,12 @@ from deepspec.utils import (
     is_global_main_process,
     load_config,
     main_process_first,
+    make_device,
     parse_opts_to_config,
     print_on_global_main,
     print_on_local_main,
     seed_all,
+    set_device,
 )
 
 os.environ["USE_TORCH"] = "true"
@@ -88,7 +92,12 @@ def run_target_forward_with_hooks(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,
     target_layer_ids,
+    output_device=None,
 ):
+    # output_device: gather all captured hidden states onto this device before
+    # concatenation. Required under tensor parallelism (device_map), where the
+    # captured layers live on different cards and torch.cat would otherwise fail
+    # on a cross-device concat. On the single-card path this is a no-op copy.
     backbone = _get_target_backbone(target_model)
     layer_modules = backbone.layers
     target_layer_ids = [int(layer_id) for layer_id in target_layer_ids]
@@ -97,7 +106,10 @@ def run_target_forward_with_hooks(
 
     def capture_layer(layer_id: int):
         def hook(_module, _inputs, output):
-            captured_hidden_states[layer_id] = _get_hook_tensor(output).detach()
+            tensor = _get_hook_tensor(output).detach()
+            if output_device is not None:
+                tensor = tensor.to(output_device)
+            captured_hidden_states[layer_id] = tensor
 
         return hook
 
@@ -121,6 +133,8 @@ def run_target_forward_with_hooks(
                 use_cache=False,
             )
             target_last_hidden_states = target_output.last_hidden_state.detach()
+            if output_device is not None:
+                target_last_hidden_states = target_last_hidden_states.to(output_device)
             target_hidden_states = torch.cat(
                 [captured_hidden_states[layer_id] for layer_id in target_layer_ids],
                 dim=-1,
@@ -151,9 +165,39 @@ def parse_args():
     parser.add_argument("--max-shard-bytes", type=int, default=64 * 1024**3)
     parser.add_argument("--local-batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument(
+        "--tp-size",
+        type=int,
+        default=1,
+        help=(
+            "Tensor-parallel size for the target model. 1 (default): one worker "
+            "per NPU, full model per card (data parallel). >1: one worker per "
+            "NODE that shards the target across tp_size cards via device_map, so "
+            "targets too large for a single card (e.g. Qwen3-32B ~64GB bf16) "
+            "fit. Nodes stay data-parallel (RANK/WORLD_SIZE = node_rank/node_count)."
+        ),
+    )
     cli_args = parser.parse_args()
     config = parse_opts_to_config(cli_args.opts, load_config(cli_args.config))
     return cli_args, config
+
+
+def _init_dist_single_process():
+    # One model-parallel replica per node; nodes are data-parallel. Mirrors the
+    # RANK/WORLD_SIZE = node_rank/node_count contract of utils.init_dist, but
+    # with a single process per node (device_map spans the node's cards).
+    node_rank = int(os.environ["RANK"])
+    node_world_size = int(os.environ["WORLD_SIZE"])
+    init_method = f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
+    set_device(0)
+    dist.init_process_group(
+        backend=accelerator_backend(),
+        init_method=init_method,
+        rank=node_rank,
+        world_size=node_world_size,
+        timeout=timedelta(minutes=60),
+    )
+    return make_device(0), node_rank, node_world_size
 
 
 def _write_manifest(
@@ -208,13 +252,18 @@ def _print_prepare_progress(*, global_rank: int, processed_samples: int, total_s
     )
 
 
-def main(local_rank: int):
-    cli_args, config = parse_args()
+def main(local_rank: int, cli_args, config, tp_size: int = 1):
     train_data_paths = list(cli_args.train_data_path)
     target_layer_ids = [int(layer_id) for layer_id in config.model.target_layer_ids]
     min_loss_tokens = int(cli_args.min_loss_tokens)
     seed_all(int(config.seed))
-    device, global_rank, world_size = init_dist(local_rank)
+    if tp_size > 1:
+        # Single worker per node; the target is sharded across tp_size cards.
+        device, global_rank, world_size = _init_dist_single_process()
+        input_device = make_device(0)
+    else:
+        device, global_rank, world_size = init_dist(local_rank)
+        input_device = device
     output_dir = os.path.abspath(cli_args.output_dir)
     print_on_local_main(json.dumps(config, indent=4, cls=CustomJSONEncoder), flush=True)
     print_on_local_main(
@@ -253,11 +302,21 @@ def main(local_rank: int):
     tokenizer = AutoTokenizer.from_pretrained(
         config.model.target_model_name_or_path,
     )
-    target_model = AutoModel.from_pretrained(
-        config.model.target_model_name_or_path,
-        dtype=torch.bfloat16,
-        attn_implementation="sdpa",
-    ).to(device=device).eval()
+    if tp_size > 1:
+        # device_map="auto" shards the target's layers across the visible cards
+        # (accelerate). Set ASCEND_RT_VISIBLE_DEVICES to exactly tp_size cards.
+        target_model = AutoModel.from_pretrained(
+            config.model.target_model_name_or_path,
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+            device_map="auto",
+        ).eval()
+    else:
+        target_model = AutoModel.from_pretrained(
+            config.model.target_model_name_or_path,
+            dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+        ).to(device=device).eval()
     target_hidden_size = _get_target_hidden_size(target_model)
     train_collator = ConversationCollator(
         tokenizer=tokenizer,
@@ -302,7 +361,7 @@ def main(local_rank: int):
                         last_progress_printed = processed_local_samples
                     continue
                 batch = {
-                    key: value.to(device, non_blocking=True)
+                    key: value.to(input_device, non_blocking=True)
                     for key, value in batch.items()
                 }
                 target_result = run_target_forward_with_hooks(
@@ -310,6 +369,7 @@ def main(local_rank: int):
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
                     target_layer_ids=target_layer_ids,
+                    output_device=input_device,
                 )
                 seq_lens = batch["attention_mask"].sum(dim=1).tolist()
                 for sample_idx_in_batch, seq_len in enumerate(seq_lens):
@@ -401,4 +461,15 @@ if __name__ == "__main__":
     if os.path.exists(".git"):
         print(f"git status:", "\n\n".join(get_git_sha(detail_info=True)))
         print("git diff:", get_git_diff())
-    torch.multiprocessing.spawn(main, nprocs=device_count())
+    _cli_args, _config = parse_args()
+    _tp_size = int(_cli_args.tp_size)
+    assert _tp_size >= 1, "--tp-size must be >= 1"
+    if _tp_size > 1:
+        # One worker per node; the target is sharded across tp_size cards.
+        main(0, _cli_args, _config, _tp_size)
+    else:
+        torch.multiprocessing.spawn(
+            main,
+            args=(_cli_args, _config, _tp_size),
+            nprocs=device_count(),
+        )

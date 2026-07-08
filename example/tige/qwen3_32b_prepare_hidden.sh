@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 # Qwen3-32B DSpark target-cache (hidden states) generation.
 #
-# !!! PER-CARD MEMORY WARNING !!!
-# prepare_target_cache.py loads a FULL copy of the target on EACH visible NPU
-# (data-parallel, no tensor parallelism). Qwen3-32B is ~61 GB in bf16, so each
-# card must hold the weights PLUS forward activations. This does NOT fit 32 GB
-# (910B4) or 64 GB cards. It needs cards large enough for the full model, or a
-# device_map/TP change to shard the target across cards (not yet in DeepSpec —
-# ask if your 910C cards are 64 GB and this OOMs; the fix is localized to
-# prepare_target_cache.py). Node count does not help: this is a per-card limit.
+# Qwen3-32B is ~64 GB in bf16 and does not fit one 32/64GB card. With
+# tp_size>1, prepare_target_cache.py runs ONE worker per node and shards the
+# target across tp_size cards via device_map (accelerate), so it fits. Nodes
+# stay data-parallel (each node builds 1/NNODES of the cache).
 #
-# Multi-node only speeds up (more data-parallel shards); memory per card is
-# unchanged. Run the SAME command on every node with matching NNODES /
-# distinct NODE_RANK.
+# Set ASCEND_RT_VISIBLE_DEVICES to exactly tp_size cards on each node. Default
+# below: single node, all 8 cards hold one sharded target.
+#   Multi-node: NNODES=<N> NODE_RANK=<i> MASTER_ADDR=<node0-ip> bash ...
+#   Throughput is one model-parallel stream per node (no per-card data
+#   parallelism), so this is slower per node than the 8B data-parallel path.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common_env.sh"
@@ -21,8 +19,10 @@ config_path=${config_path:-config/dspark/dspark_qwen3_32b.py}
 train_data_path=${train_data_path:-/opt/w00958190/DeepSpec/data/train.jsonl}
 cache_dir=${cache_dir:-/opt/w00958190/DeepSpec/data/hidden_qwen3_32b}
 data_max_length=${data_max_length:-4096}
-# 32B stores 5 layers x 5120 hidden per token -> ~61 KB/token on disk (vs ~49 KB
-# for 8B). Keep the target-forward batch small.
+# tp_size: how many cards hold one target replica (>= enough to fit ~64GB bf16;
+# 8 x 64GB is plenty, and even 2 x 64GB fits). Keep it = the number of visible
+# cards on the node unless you want multiple replicas per node.
+tp_size=${tp_size:-8}
 cache_local_batch_size=${cache_local_batch_size:-4}
 
 mkdir -p "${cache_dir}"
@@ -32,6 +32,7 @@ python scripts/data/prepare_target_cache.py \
     --train-data-path "${train_data_path}" \
     --output-dir "${cache_dir}" \
     --local-batch-size "${cache_local_batch_size}" \
+    --tp-size "${tp_size}" \
     --opts "data.max_length=${data_max_length}"
 
 echo "[tige] Qwen3-32B target cache done: ${cache_dir}"
