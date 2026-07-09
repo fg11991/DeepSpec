@@ -92,12 +92,70 @@ auto_wrap_policy，整个模型是一个 flat 单元，反向须一次性分配�
 world_size+sharding_strategy+fsdp_auto_wrap 三元组**；step_N 里的模型 safetensors
 布局无关，可随意加载。
 
-### 6. 文档
+### 6. Eval 进度输出 + 数据集/样本选择
+
+为什么：eval 从「loading weights」到第一个数据集**整个跑完**之间零输出，一条 gsm8k
+要闷头生成 500 条，看起来像卡死；且无法只跑单个数据集做冒烟。
+
+作用：`run_dataset` 打印每数据集表头 + rank0 逐样本进度（累计耗时、s/sample）;
+`eval.py` 加 `--tasks`（逗号分隔子集）和 `--max-samples`（每集上限），配
+`--max-new-tokens` 可秒级冒烟。`--max-samples` 减的是样本条数不是每条耗时。
+
+### 7. tige/ 多节点平台脚本 + Qwen3-32B config
+
+为什么：要在训练平台（910C 集群）上多节点跑，且需要 Qwen3-32B target。
+
+- **多节点机制**：DeepSpec **不用 torchrun**——`RANK`=节点号、`WORLD_SIZE`=**节点数**，
+  每节点 spawn 每卡一 worker，全局 rank=`NODE_RANK*8+local_rank`。prepare/train
+  支持多节点；eval 设单节点 8 卡。
+- `example/tige/`：`_common_env.sh`（NNODES/NODE_RANK→RANK/WORLD_SIZE 映射、HCCL
+  超时、输出目录）+ 6 个脚本（8B/32B 各 prepare_hidden/train/eval）。
+- `config/dspark/dspark_qwen3_32b.py`：照 8B 改，64 层 / hidden 5120，
+  `target_layer_ids=[1,16,31,46,61]`（步长 15、避开最终层 63）。
+
+### 8. prepare_hidden 的 `--tp-size`（device_map 跨卡切分大 target）
+
+为什么：`prepare_target_cache.py` 每卡加载一份完整 target（无 TP），Qwen3-32B
+（~64GB bf16）单卡（32/64GB）装不下，多节点也救不了（每卡显存问题）。
+
+作用：`--tp-size N`（默认 1，原每卡一进程快路径不变）。`>1` 时**每节点单进程**，
+用 `device_map="auto"` 把 target 切到 N 张卡上；节点间仍按 `RANK/WORLD_SIZE` 数据
+并行，单节点默认值齐全（不用手动 export）。device_map 下各层 hidden 在不同卡，
+hook 抓取时统一搬到 card 0 再 `torch.cat`（否则跨设备失败）。代价：tp>1 是单路
+模型并行流，比数据并行慢，但这是 64GB 卡跑 32B 唯一的路。eval 侧同样问题待做。
+
+### 9. Gemma4 可选导入
+
+为什么：`gemma4/modeling.py` 顶层 import `transformers.models.gemma4` + `flex_attention`，
+旧版 transformers / torch_npu 上可能缺；这个 ImportError 顺着包 `__init__` 传播，把
+**Qwen3** 的导入路径也一起带崩（qwen3 本身不 import 这两者）。
+
+作用：根因修复 `gemma4/__init__.py`（modeling 导入包 try/except，置 None），另加
+`modeling/dspark/__init__.py`、`trainer/dspark_trainer.py` 两处保护。只包 trainer 第
+2 行不够——它第 3 行 `from ...gemma4.config import ...` 会先触发包 `__init__` 而崩，
+所以 `__init__` 的根因修复才是关键。只有真训练 Gemma4 才需要该模型类。
+
+### 10. 训练体验：静默 warning + tqdm 进度条
+
+为什么：NPU 上刷屏的 torch_npu 属主/权限、CANN owner、FSDP deprecation、distributed
+device_id、c10「Driver Version invalid」warning 淹没日志，且原来看不到训练进度。
+
+作用：
+- 在 `train.py`/`eval.py`/`prepare_target_cache.py` 的 **import torch 之前**设
+  `PYTHONWARNINGS=ignore`（spawn 的 worker 继承，warning 是 worker 里打的）+
+  `TORCH_CPP_LOG_LEVEL=error`（压 c10 C++ warning）+ `warnings.filterwarnings`。
+- rank0 加 tqdm 进度条：`Training epoch N/T`、step/总 step、loss、acc（accept_rate@0）、
+  ETA；周期日志改走 `tqdm.write` 不冲掉进度条。
+
+### 11. 文档
 
 - `docs/CODE_GUIDE_zh.md`：代码阅读指南（模块一 prepare hidden / 模块二 training，
   含仓库结构、关键行号、建议阅读顺序）。
-- `example/README.md`：镜像、docker run（含输出目录挂载）、磁盘预算、OOM 处置
-  阶梯、数据格式要点。
+- `docs/USP_PORTING_NOTES_zh.md`：未来给 DSpark 移植 SpecForge 的 Ulysses 序列并行
+  的提示（可复用的 `SeqAllToAll4D`、同构的 attention 结构、以及块状 mask 序列分片
+  这个唯一难点）。当前 seq≤4096 不需要。
+- `example/README.md`、`example/tige/README.md`：镜像、docker run、多节点跑法、磁盘
+  预算、OOM 处置阶梯、数据格式要点。
 
 ---
 
@@ -113,9 +171,21 @@ world_size+sharding_strategy+fsdp_auto_wrap 三元组**；step_N 里的模型 sa
 | 续训报 aclnnInplaceCopy broadcast | 分片布局变了还在自动续训 | 换 exp_name 或删 step_latest（已加校验拦截） |
 
 其他事实：优化器/梯度切分 `shard_grad_op` 与 `full_shard` 在本仓库（单 flat 单元
-时）等价；训练时 target 模型不在卡上（CPU 拷 embed/lm_head 即删）；cache 生成
-阶段每卡加载完整 target，64GB 卡的 target 天花板 ~14B bf16（32B 需改 device_map
-跨卡切分）。
+时）等价；训练时 target 模型不在卡上（CPU 拷 embed/lm_head 即删）；cache 生成默认
+每卡加载完整 target（64GB 卡 target 天花板 ~14B bf16），**Qwen3-32B 用 `--tp-size`
+跨卡切分**（见适配 8）；`torch.compile` 在 torch_npu 上 inductor codegen 会崩，NPU
+必须 `train.torch_compile=False`（走 eager+SDPA）。
+
+## 支持范围与已知限制
+
+- **target 架构只支持 Qwen3 / Gemma4**（dspark 与 eagle3 各有对应 modeling/trainer/
+  evaluator）；`deepspec/` 和 `config/` 里没有任何 DeepSeek / MLA / MoE-attention 代码。
+- **不能训 DeepSeek target 的 draft**：draft 是按家族写死的类（`Qwen3DSparkModel`
+  等）。要支持需新增 `modeling/dspark/deepseek/{config,modeling}.py` + `DeepSeekDSpark
+  Trainer` + evaluator 并注册。好在 draft 可做稠密网络（参考 gemma4 对 MoE target 的
+  `enable_moe_block=False`），不必复刻 MLA/MoE。cache 侧用 `AutoModel` 是架构无关的，
+  瓶颈只在 draft 侧。官方 V4-Flash/Pro 的 DSpark draft 是内部代码训的，公开 DeepSpec
+  未含 DeepSeek modeling。
 
 ---
 
