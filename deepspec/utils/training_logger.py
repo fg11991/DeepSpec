@@ -2,6 +2,7 @@ import time
 from typing import Optional
 
 from torch.utils.tensorboard import SummaryWriter
+from tqdm.auto import tqdm
 
 from deepspec.utils import ensure_dir, is_global_main_process, print_on_global_main
 from deepspec.utils.metrics import add_metric, flush, reset
@@ -91,10 +92,15 @@ def _print_summary(
     loss_text = ""
     if "train/loss" in summary:
         loss_text = f" loss={summary['train/loss']:.4f}"
-    print_on_global_main(
-        f"epoch={current_epoch} "
-        f"step={global_step}/{max_train_steps}"
-        f"{loss_text} "
-        f"| elapsed={session_elapsed / 60:.1f}min"
-        f" | remaining={remaining_min:.1f}min"
-    )
+    acc_text = ""
+    if "train/accept_rate@0" in summary:
+        acc_text = f" acc={summary['train/accept_rate@0']:.4f}"
+    # tqdm.write keeps the live progress bar intact instead of scrolling over it.
+    if is_global_main_process():
+        tqdm.write(
+            f"epoch={current_epoch} "
+            f"step={global_step}/{max_train_steps}"
+            f"{loss_text}{acc_text} "
+            f"| elapsed={session_elapsed / 60:.1f}min"
+            f" | remaining={remaining_min:.1f}min"
+        )

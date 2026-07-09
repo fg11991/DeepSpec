@@ -1,6 +1,16 @@
+import os
+import warnings
+
+# Silence noisy third-party warnings before torch / torch_npu import so spawned
+# workers inherit it too: torch_npu file-owner/permission mismatches, CANN owner
+# checks, FSDP state_dict deprecation, the distributed device_id notice, and the
+# c10 "Driver Version ... is invalid" C++ warning.
+os.environ.setdefault("PYTHONWARNINGS", "ignore")       # inherited by spawned workers
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "error")   # quiet c10 [W...] warnings
+warnings.filterwarnings("ignore")
+
 import argparse
 import json
-import os
 import torch
 from deepspec.utils import (
     CustomJSONEncoder,

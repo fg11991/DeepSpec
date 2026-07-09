@@ -1,4 +1,12 @@
 from __future__ import annotations
+import os
+import warnings
+
+# Silence noisy torch_npu / CANN / FSDP / c10 warnings before torch import.
+os.environ.setdefault("PYTHONWARNINGS", "ignore")
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "error")
+warnings.filterwarnings("ignore")
+
 import argparse
 import json
 import torch

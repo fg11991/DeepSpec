@@ -8,6 +8,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from deepspec.data import CacheDataset, validate_train_cache
@@ -398,6 +399,18 @@ class BaseTrainer:
         prefetcher = CUDAPrefetcher(dataloader, self.device)
         training_logger.start_session(global_step=self.global_step)
 
+        total_epochs = int(self.args.train.num_train_epochs)
+        progress = None
+        if is_global_main_process():
+            progress = tqdm(
+                total=self.max_train_steps,
+                initial=self.global_step,
+                dynamic_ncols=True,
+                desc=f"Training epoch {self.next_micro_step // self.micro_batches_per_epoch + 1}/{total_epochs}",
+            )
+        accum_loss = None
+        last_acc = None
+
         with self.suspend_controller.monitoring():
             for batch in prefetcher:
                 should_sync = (
@@ -407,6 +420,9 @@ class BaseTrainer:
                 with sync_context:
                     loss = self.run_batch(batch) / self.gradient_accumulation_steps
                     loss.backward()
+                accum_loss = (
+                    loss.detach() if accum_loss is None else accum_loss + loss.detach()
+                )
                 self.next_micro_step += 1
 
                 if not should_sync:
@@ -417,7 +433,7 @@ class BaseTrainer:
                     float(self.args.train.max_grad_norm),
                 )
                 self.optimizer.step()
-                training_logger.on_optimizer_step(
+                summary = training_logger.on_optimizer_step(
                     global_step=self.global_step,
                     next_micro_step=self.next_micro_step,
                     micro_batches_per_epoch=self.micro_batches_per_epoch,
@@ -425,14 +441,30 @@ class BaseTrainer:
                     learning_rate=self.optimizer.get_learning_rate(),
                     grad_norm=grad_norm.item(),
                 )
+                step_loss = accum_loss.item()
+                accum_loss = None
+                if summary is not None and "train/accept_rate@0" in summary:
+                    last_acc = summary["train/accept_rate@0"]
+                if progress is not None:
+                    epoch = self.next_micro_step // self.micro_batches_per_epoch + 1
+                    progress.set_description(f"Training epoch {epoch}/{total_epochs}")
+                    postfix = {"loss": f"{step_loss:.4f}"}
+                    if last_acc is not None:
+                        postfix["acc"] = f"{last_acc:.4f}"
+                    progress.set_postfix(postfix)
+                    progress.update(1)
 
                 if self.global_step % int(self.args.logging.checkpointing_steps) == 0:
                     self.save_and_eval_checkpoint()
 
                 if self.suspend_controller.requested():
                     self._save_and_suspend()
+                    if progress is not None:
+                        progress.close()
                     return
 
+        if progress is not None:
+            progress.close()
         self.save_and_eval_checkpoint()
 
     def clean_up(self):
