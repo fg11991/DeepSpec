@@ -14,6 +14,7 @@ import json
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, Subset
+from tqdm.auto import tqdm
 from transformers import AutoModel, AutoTokenizer
 
 from deepspec.data import ConversationCollator
@@ -256,9 +257,9 @@ def _write_manifest(
 
 
 def _print_prepare_progress(*, global_rank: int, processed_samples: int, total_samples: int):
-    print(
-        f"[prepare rank {global_rank}] {processed_samples}/{total_samples} samples",
-        flush=True,
+    # tqdm.write keeps rank 0's live progress bar intact.
+    tqdm.write(
+        f"[prepare rank {global_rank}] {processed_samples}/{total_samples} samples"
     )
 
 
@@ -350,6 +351,14 @@ def main(local_rank: int, cli_args, config, tp_size: int = 1):
 
     processed_local_samples = 0
     last_progress_printed = 0
+    progress = None
+    if global_rank == 0:
+        progress = tqdm(
+            total=local_total_samples,
+            desc=f"Preparing cache (rank0, {world_size} ranks)",
+            unit="sample",
+            dynamic_ncols=True,
+        )
     try:
         with torch.no_grad():
             for batch_idx, batch in enumerate(dataloader):
@@ -357,6 +366,8 @@ def main(local_rank: int, cli_args, config, tp_size: int = 1):
                     (batch_idx + 1) * int(cli_args.local_batch_size),
                     local_total_samples,
                 )
+                if progress is not None:
+                    progress.update(processed_local_samples - progress.n)
                 should_print_progress = (
                     processed_local_samples - last_progress_printed >= 100
                     or processed_local_samples == local_total_samples
@@ -406,6 +417,8 @@ def main(local_rank: int, cli_args, config, tp_size: int = 1):
                     last_progress_printed = processed_local_samples
     finally:
         writer.close()
+        if progress is not None:
+            progress.close()
     del target_model
     empty_cache()
     dataset.close()
