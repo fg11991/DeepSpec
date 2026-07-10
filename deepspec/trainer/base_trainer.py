@@ -71,8 +71,43 @@ def _fsdp_auto_wrap_policy(module, recurse, nonwrapped_numel):
     )
 
 
+def _resolve_hsdp_shard_size(
+    *, world_size: int, devices_per_node: int, config_value=None
+) -> int:
+    # Number of ranks per HSDP shard group (the "shard" mesh dim). Params are
+    # sharded within a group and replicated across groups. Default is one node
+    # (devices_per_node): the parameter all-gather stays intra-node (fast HCCS).
+    # For a large draft that doesn't fit when sharded over a single node, widen
+    # the group to span N nodes (e.g. 16 = 2 nodes on 8-NPU hosts): per-card
+    # sharded state drops ~linearly while the all-gather only spans that group,
+    # not the whole world. Precedence: env > config > one node.
+    raw = os.environ.get("DEEPSPEC_HSDP_SHARD_SIZE", "")
+    if raw != "":
+        shard_size = int(raw)
+    elif config_value:
+        shard_size = int(config_value)
+    else:
+        shard_size = devices_per_node
+    assert shard_size > 0, "hsdp shard size must be positive"
+    assert shard_size % devices_per_node == 0, (
+        f"hsdp shard size ({shard_size}) must be a whole number of nodes "
+        f"(a multiple of devices_per_node={devices_per_node}) so shard groups "
+        f"align to node boundaries"
+    )
+    assert world_size % shard_size == 0, (
+        f"world_size ({world_size}) must be divisible by hsdp shard size "
+        f"({shard_size})"
+    )
+    return shard_size
+
+
 def _build_fsdp_kwargs(
-    *, sharding_strategy_name: str, precision_dtype, world_size: int, auto_wrap: bool = False
+    *,
+    sharding_strategy_name: str,
+    precision_dtype,
+    world_size: int,
+    auto_wrap: bool = False,
+    hsdp_shard_size=None,
 ) -> dict:
     sharding_strategy = _SHARDING_STRATEGIES[sharding_strategy_name]
     fsdp_kwargs = dict(
@@ -87,9 +122,19 @@ def _build_fsdp_kwargs(
         fsdp_kwargs["auto_wrap_policy"] = _fsdp_auto_wrap_policy
     if sharding_strategy in _HYBRID_STRATEGIES:
         devices_per_node = device_count()
+        shard_size = _resolve_hsdp_shard_size(
+            world_size=world_size,
+            devices_per_node=devices_per_node,
+            config_value=hsdp_shard_size,
+        )
+        num_replicas = world_size // shard_size
+        print_on_local_main(
+            f"HSDP device mesh: {num_replicas} replica(s) x {shard_size} shard "
+            f"ranks ({shard_size // devices_per_node} node(s) per shard group)"
+        )
         fsdp_kwargs["device_mesh"] = init_device_mesh(
             device_type(),
-            (world_size // devices_per_node, devices_per_node),
+            (num_replicas, shard_size),
             mesh_dim_names=("replicate", "shard"),
         )
     return fsdp_kwargs
@@ -318,6 +363,7 @@ class BaseTrainer:
             precision_dtype=self.precision_dtype,
             world_size=self.world_size,
             auto_wrap=auto_wrap,
+            hsdp_shard_size=self.args.train.get("hsdp_shard_size"),
         )
         fsdp_kwargs["device_id"] = self.device
         return FSDP(model, **fsdp_kwargs)

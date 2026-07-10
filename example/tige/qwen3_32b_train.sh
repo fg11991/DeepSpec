@@ -41,11 +41,20 @@ launcher=${launcher:-python}
 # single node there is no inter-node fabric, so full_shard is fine and shards
 # deepest. Override with sharding_strategy=... (e.g. hybrid_shard_zero2 for
 # less intra-node re-gather at higher memory).
+#
+# hybrid_shard shards WITHIN each node by default (8 NPUs). The 32B draft's
+# optimizer state may not fit sharded over just 8 cards -> OOM. If so, widen
+# the shard group to span multiple nodes via DEEPSPEC_HSDP_SHARD_SIZE (ranks,
+# a whole number of nodes): e.g. 16 = 2 nodes halves per-card sharded state
+# while the all-gather still only spans those 2 nodes, not the whole job.
+#   DEEPSPEC_HSDP_SHARD_SIZE=16 NNODES=4 NODE_RANK=<i> MASTER_ADDR=<ip> \
+#       launcher=torchrun bash .../qwen3_32b_train.sh
 if [[ "${NNODES}" -gt 1 ]]; then
     sharding_strategy=${sharding_strategy:-hybrid_shard}
 else
     sharding_strategy=${sharding_strategy:-full_shard}
 fi
+export DEEPSPEC_HSDP_SHARD_SIZE=${DEEPSPEC_HSDP_SHARD_SIZE:-}
 
 train_opts=(
     --config "${config_path}"

@@ -46,6 +46,11 @@ train = dict(
     max_train_steps=None,
     max_grad_norm=1.0,
     sharding_strategy="no_shard",
+    # HSDP shard-group size in RANKS (only used when sharding_strategy is a
+    # hybrid_shard variant). None = one node. Widen to span multiple nodes
+    # (e.g. 16 = 2 nodes) when the draft won't fit sharded over a single node.
+    # Env DEEPSPEC_HSDP_SHARD_SIZE overrides this.
+    hsdp_shard_size=None,
     torch_compile=True,
     gradient_checkpointing=False,
     fsdp_auto_wrap=False,
