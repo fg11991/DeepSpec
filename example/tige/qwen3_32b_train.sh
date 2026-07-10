@@ -28,14 +28,30 @@ checkpointing_steps=${checkpointing_steps:-500}
 # Launcher: set launcher=torchrun to launch one process per rank via torchrun
 # (recommended for multi-node - matches how SpecForge runs on this platform and
 # binds each rank's NPU/NIC cleanly). Default is DeepSpec's built-in
-# spawn-per-node launcher. train.py auto-detects torchrun via LOCAL_RANK.
+# spawn-per-node launcher. train.py auto-detects torchrun via TORCHELASTIC_RUN_ID.
 launcher=${launcher:-python}
+
+# Sharding strategy. On >1 node, default to hybrid_shard (HSDP): shard the model
+# WITHIN each node (8 NPUs over fast HCCS) and REPLICATE across nodes, so the
+# heavy per-micro-batch parameter all-gather never crosses the slow inter-node
+# fabric - only the small draft-gradient all-reduce does, once per optimizer
+# step. Plain full_shard (ZeRO-3) shards across ALL ranks, so every all-gather
+# traverses inter-node links and gets dramatically slower as nodes grow (we
+# measured 29 s/it on 2 nodes vs 180 s/it on 4 nodes with full_shard). On a
+# single node there is no inter-node fabric, so full_shard is fine and shards
+# deepest. Override with sharding_strategy=... (e.g. hybrid_shard_zero2 for
+# less intra-node re-gather at higher memory).
+if [[ "${NNODES}" -gt 1 ]]; then
+    sharding_strategy=${sharding_strategy:-hybrid_shard}
+else
+    sharding_strategy=${sharding_strategy:-full_shard}
+fi
 
 train_opts=(
     --config "${config_path}"
     --opts "data.target_cache_path=${cache_dir}"
     --opts "train.torch_compile=False"
-    --opts "train.sharding_strategy=full_shard"
+    --opts "train.sharding_strategy=${sharding_strategy}"
     --opts "train.fsdp_auto_wrap=True"
     --opts "train.gradient_checkpointing=True"
     --opts "train.local_batch_size=${local_batch_size}"
