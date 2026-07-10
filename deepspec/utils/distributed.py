@@ -35,7 +35,11 @@ def init_dist(local_rank: int, timeout_minutes: int = 60):
         world_size=world_size,
         timeout=timedelta(minutes=timeout_minutes),
     )
-    if device.type == "cuda":
+    # Bind the communicator to this rank's device eagerly. Without device_id
+    # torch warns ("No device id is provided via init_process_group") and sets
+    # up collectives less optimally. Pass it for NPU too, not just CUDA. If an
+    # older torch_npu rejects device_id, set DEEPSPEC_NO_DEVICE_ID=1 to skip it.
+    if os.environ.get("DEEPSPEC_NO_DEVICE_ID", "") != "1":
         init_kwargs["device_id"] = device
     dist.init_process_group(**init_kwargs)
     return device, rank, world_size
