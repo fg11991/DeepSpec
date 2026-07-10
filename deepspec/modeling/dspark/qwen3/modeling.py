@@ -448,21 +448,21 @@ class Qwen3DSparkModel(Qwen3PreTrainedModel):
         aligned_target_logits = None
         if target_last_hidden_states is not None:
             target_pred_indices = (safe_label_indices - 1).clamp(min=0)
-            aligned_target_hidden = torch.gather(
-                target_last_hidden_states.unsqueeze(1).expand(
-                    -1,
-                    anchor_positions.size(1),
-                    -1,
-                    -1,
-                ),
-                2,
-                target_pred_indices.unsqueeze(-1).expand(
-                    -1,
-                    -1,
-                    -1,
-                    target_last_hidden_states.size(-1),
-                ),
+            # Gather on the un-expanded [B, S, H] target hidden with flattened
+            # block indices, producing [B, num_anchors, block_size, H] directly.
+            # The equivalent expand-then-gather ([B, num_anchors, S, H]) is a
+            # zero-copy stride-0 view on CUDA, but torch_npu materializes the
+            # expanded input (tens of GiB at long sequences) and OOMs.
+            hidden_dim = target_last_hidden_states.size(-1)
+            num_blocks_ = target_pred_indices.size(1)
+            flat_indices = target_pred_indices.reshape(bsz, -1, 1).expand(
+                -1, -1, hidden_dim
             )
+            aligned_target_hidden = torch.gather(
+                target_last_hidden_states,
+                1,
+                flat_indices,
+            ).reshape(bsz, num_blocks_, self.block_size, hidden_dim)
             aligned_target_logits = self.compute_logits(aligned_target_hidden)
         eval_mask = build_eval_mask(
             seq_len=seq_len,
