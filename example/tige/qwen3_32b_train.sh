@@ -25,17 +25,36 @@ local_batch_size=${local_batch_size:-1}
 global_batch_size=${global_batch_size:-512}
 checkpointing_steps=${checkpointing_steps:-500}
 
-python train.py \
-    --config "${config_path}" \
-    --opts "data.target_cache_path=${cache_dir}" \
-    --opts "train.torch_compile=False" \
-    --opts "train.sharding_strategy=full_shard" \
-    --opts "train.fsdp_auto_wrap=True" \
-    --opts "train.gradient_checkpointing=True" \
-    --opts "train.local_batch_size=${local_batch_size}" \
-    --opts "train.global_batch_size=${global_batch_size}" \
-    --opts "model.num_anchors=${num_anchors}" \
-    --opts "logging.checkpointing_steps=${checkpointing_steps}" \
-    --opts "exp_name=${exp_name}"
+# Launcher: set launcher=torchrun to launch one process per rank via torchrun
+# (recommended for multi-node - matches how SpecForge runs on this platform and
+# binds each rank's NPU/NIC cleanly). Default is DeepSpec's built-in
+# spawn-per-node launcher. train.py auto-detects torchrun via LOCAL_RANK.
+launcher=${launcher:-python}
 
-echo "[tige] Qwen3-32B training launched (exp_name=${exp_name})"
+train_opts=(
+    --config "${config_path}"
+    --opts "data.target_cache_path=${cache_dir}"
+    --opts "train.torch_compile=False"
+    --opts "train.sharding_strategy=full_shard"
+    --opts "train.fsdp_auto_wrap=True"
+    --opts "train.gradient_checkpointing=True"
+    --opts "train.local_batch_size=${local_batch_size}"
+    --opts "train.global_batch_size=${global_batch_size}"
+    --opts "model.num_anchors=${num_anchors}"
+    --opts "logging.checkpointing_steps=${checkpointing_steps}"
+    --opts "exp_name=${exp_name}"
+)
+
+if [[ "${launcher}" == "torchrun" ]]; then
+    torchrun \
+        --nnodes "${NNODES}" \
+        --node_rank "${NODE_RANK}" \
+        --master_addr "${MASTER_ADDR}" \
+        --master_port "${MASTER_PORT}" \
+        --nproc_per_node 8 \
+        train.py "${train_opts[@]}"
+else
+    python train.py "${train_opts[@]}"
+fi
+
+echo "[tige] Qwen3-32B training launched (exp_name=${exp_name}, launcher=${launcher})"

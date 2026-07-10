@@ -17,14 +17,29 @@ from .device import (
 )
 
 
+def is_torchrun() -> bool:
+    # torchrun sets LOCAL_RANK (and global RANK/WORLD_SIZE) per process.
+    return "LOCAL_RANK" in os.environ
+
+
 def init_dist(local_rank: int, timeout_minutes: int = 60):
-    local_world_size = device_count()
-    assert local_world_size > 0, "no accelerator devices are visible"
-    node_rank = int(os.environ["RANK"])
-    node_world_size = int(os.environ["WORLD_SIZE"])
-    rank = node_rank * local_world_size + local_rank
-    world_size = node_world_size * local_world_size
-    init_method = f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
+    if is_torchrun():
+        # torchrun already launched one process per rank with global
+        # RANK/WORLD_SIZE/LOCAL_RANK set; use them directly.
+        local_rank = int(os.environ["LOCAL_RANK"])
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        init_method = "env://"
+    else:
+        # Built-in launcher: one process per NODE (mp.spawn spawns one worker
+        # per device), so RANK/WORLD_SIZE mean node_rank/node_count here.
+        local_world_size = device_count()
+        assert local_world_size > 0, "no accelerator devices are visible"
+        node_rank = int(os.environ["RANK"])
+        node_world_size = int(os.environ["WORLD_SIZE"])
+        rank = node_rank * local_world_size + local_rank
+        world_size = node_world_size * local_world_size
+        init_method = f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
     set_device(local_rank)
     device = make_device(local_rank)
 

@@ -53,4 +53,9 @@ if __name__ == "__main__":
     if os.path.exists(".git"):
         print(f"git status:", "\n\n".join(get_git_sha(detail_info=True)))
         print("git diff:", get_git_diff())
-    torch.multiprocessing.spawn(main, nprocs=device_count())
+    if "LOCAL_RANK" in os.environ:
+        # Launched by torchrun: this process already IS one rank; don't spawn.
+        main(int(os.environ["LOCAL_RANK"]))
+    else:
+        # Built-in launcher: spawn one worker per visible device on this node.
+        torch.multiprocessing.spawn(main, nprocs=device_count())
