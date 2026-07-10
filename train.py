@@ -53,7 +53,12 @@ if __name__ == "__main__":
     if os.path.exists(".git"):
         print(f"git status:", "\n\n".join(get_git_sha(detail_info=True)))
         print("git diff:", get_git_diff())
-    if "LOCAL_RANK" in os.environ:
+    # Detect torchrun via TORCHELASTIC_RUN_ID, NOT LOCAL_RANK: some platforms
+    # export LOCAL_RANK as the visible-device list (e.g. "0,1,2,3,4,5,6,7")
+    # even for the built-in spawn launcher, so keying on LOCAL_RANK would send
+    # the spawn path into int("0,1,...") and crash. torchrun always sets
+    # TORCHELASTIC_RUN_ID and a clean integer LOCAL_RANK per process.
+    if "TORCHELASTIC_RUN_ID" in os.environ:
         # Launched by torchrun: this process already IS one rank; don't spawn.
         main(int(os.environ["LOCAL_RANK"]))
     else:

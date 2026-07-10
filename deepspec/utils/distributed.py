@@ -18,8 +18,12 @@ from .device import (
 
 
 def is_torchrun() -> bool:
-    # torchrun sets LOCAL_RANK (and global RANK/WORLD_SIZE) per process.
-    return "LOCAL_RANK" in os.environ
+    # Detect torchrun via TORCHELASTIC_RUN_ID, not LOCAL_RANK: some platforms
+    # export LOCAL_RANK as the visible-device list (e.g. "0,1,...,7") for the
+    # built-in spawn launcher too, so keying on LOCAL_RANK misfires there.
+    # torchrun always sets TORCHELASTIC_RUN_ID plus a clean per-process
+    # LOCAL_RANK / global RANK / WORLD_SIZE.
+    return "TORCHELASTIC_RUN_ID" in os.environ
 
 
 def init_dist(local_rank: int, timeout_minutes: int = 60):
