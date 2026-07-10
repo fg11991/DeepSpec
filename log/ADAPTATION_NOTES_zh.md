@@ -144,10 +144,27 @@ device_id、c10「Driver Version invalid」warning 淹没日志，且原来看�
 - 在 `train.py`/`eval.py`/`prepare_target_cache.py` 的 **import torch 之前**设
   `PYTHONWARNINGS=ignore`（spawn 的 worker 继承，warning 是 worker 里打的）+
   `TORCH_CPP_LOG_LEVEL=error`（压 c10 C++ warning）+ `warnings.filterwarnings`。
-- rank0 加 tqdm 进度条：`Training epoch N/T`、step/总 step、loss、acc（accept_rate@0）、
-  ETA；周期日志改走 `tqdm.write` 不冲掉进度条。
+- 训练 rank0 加 tqdm 进度条：`Training epoch N/T`、step/总 step、loss、
+  acc（accept_rate@0）、ETA；周期日志改走 `tqdm.write` 不冲掉进度条。
+- prepare_hidden 也加了 rank0 tqdm 进度条（处理/总样本、速率、ETA），周期文本同样
+  走 `tqdm.write`。
 
-### 11. 文档
+### 11. NPU expand 物化 OOM 修复（gather）
+
+为什么：8192 长序列训练时 backward 前的蒸馏 gather 报 `Tried to allocate 80.21 GiB`
+（卡上 56GB 空闲却要 80GB）。根因是 `target_last_hidden_states.unsqueeze(1).expand(
+-1, num_anchors, -1, -1)` 再 gather——这个 expand 在 **CUDA 上是零拷贝 stride-0 视图**，
+但 **torch_npu 的 gather 会把它物化**成 `[B, num_anchors, S, H]` 连续张量（512×8192×
+5120 bf16 ≈ 40GB，加同形工作区 ≈ 80GB）。该值随 `num_anchors×seq×hidden` 增长，seq
+4096→8192 直接翻倍顶爆。
+
+作用：改成在**未 expand 的** `[B, S, H]` 上用扁平 block 索引 gather，直接得
+`[B, num_anchors, block_size, H]`，中间不再出现巨型张量（最大中间量 ~37MB）。qwen3/
+gemma4 都改，数值 `torch.equal` 验证一致，CUDA 行为不变。**教训**：CUDA 上零拷贝的
+`expand` 喂给 NPU 算子（gather/index 等）可能被静默物化——排查 NPU 反常大分配时优先
+怀疑 expand。
+
+### 12. 文档
 
 - `docs/CODE_GUIDE_zh.md`：代码阅读指南（模块一 prepare hidden / 模块二 training，
   含仓库结构、关键行号、建议阅读顺序）。
@@ -163,6 +180,7 @@ device_id、c10「Driver Version invalid」warning 淹没日志，且原来看�
 
 | 症状 | 原因 | 解法 |
 | --- | --- | --- |
+| gather 处 OOM 几十~80GiB（长序列，卡上明明空闲） | `expand([B,A,S,H])`+gather 被 torch_npu 物化（CUDA 零拷贝） | 已在代码修复（适配 11），改成未 expand 的 `[B,S,H]` gather |
 | backward 恒定 OOM ~4.42GiB | 单 flat 单元整体梯度缓冲（参数结构决定，调激活参数无效） | `train.fsdp_auto_wrap=True` |
 | attention 处 OOM | NPU SDPA 稠密 mask 路径逐层保存反向激活 | `train.gradient_checkpointing=True`；根源上重建短序列 cache |
 | 改 `data.max_length` 无效 | 序列长度在 cache 构建时固定 | 重建 cache 时传 `data_max_length` |
