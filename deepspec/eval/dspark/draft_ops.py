@@ -141,6 +141,13 @@ def build_dspark_proposal(
         draft_logits[:, :proposal_draft_tokens, :],
         temperature,
     )
+    # Normalize over the draft vocabulary first, then widen: verification gathers
+    # by target id and requires the target's vocabulary width. A pruned draft
+    # that skipped this would either raise on the width check or, worse, index
+    # the wrong column.
+    scatter = getattr(model, "scatter_draft_probs_to_target", None)
+    if scatter is not None:
+        draft_probs = scatter(draft_probs)
     return DSparkDraftProposal(
         draft_token_count=proposal_draft_tokens,
         verify_input_ids=verify_input_ids,

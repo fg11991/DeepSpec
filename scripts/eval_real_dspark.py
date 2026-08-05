@@ -88,6 +88,10 @@ class LiteDSparkEval(Qwen3DSparkEvaluator):
 
         ensure("target_layer_ids", dfc.get("target_layer_ids", raw.get("target_layer_ids")))
         ensure("mask_token_id", dfc.get("mask_token_id", raw.get("mask_token_id")))
+        # SpecForge writes draft_vocab_size at the config top level; without it
+        # the draft would be built full-vocabulary and the checkpoint's pruned
+        # lm_head / markov_w2 would not fit.
+        ensure("draft_vocab_size", raw.get("draft_vocab_size"))
         ensure("num_anchors", self.num_anchors)
         for k, v in self.draft_config_overrides.items():
             setattr(cfg, k, v)
@@ -124,9 +128,24 @@ class LiteDSparkEval(Qwen3DSparkEvaluator):
             tgt_embed = target_model.get_input_embeddings().weight
             tgt_head = target_model.get_output_embeddings().weight
             assert draft_model.embed_tokens.weight.shape == tgt_embed.shape
-            assert draft_model.lm_head.weight.shape == tgt_head.shape
             draft_model.embed_tokens.weight.copy_(tgt_embed.to(draft_model.embed_tokens.weight.device))
-            draft_model.lm_head.weight.copy_(tgt_head.to(draft_model.lm_head.weight.device))
+            head_weight = tgt_head
+            if getattr(draft_model, "use_draft_vocab", False):
+                # A pruned draft borrows only the rows t2d keeps, so that
+                # generation proposes exactly the tokens training supervised.
+                assert bool(draft_model.t2d.any()), (
+                    "draft prunes the vocabulary but the checkpoint carried no "
+                    "t2d/d2t; export it from a run trained with draft_vocab_size."
+                )
+                mask = draft_model.t2d.to(device=tgt_head.device, dtype=torch.bool)
+                head_weight = tgt_head[mask]
+                print(
+                    f"  [词表裁剪] draft_vocab={draft_model.draft_vocab_size} / "
+                    f"target_vocab={draft_model.vocab_size} "
+                    f"({draft_model.vocab_size / draft_model.draft_vocab_size:.2f}x)"
+                )
+            assert draft_model.lm_head.weight.shape == head_weight.shape
+            draft_model.lm_head.weight.copy_(head_weight.to(draft_model.lm_head.weight.device))
         print("  [embed/lm_head] 已从 target 拷入 draft")
 
         assert_no_final_target_layer(target_model, draft_model.target_layer_ids)

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 from torch import nn
@@ -6,16 +6,31 @@ from torch import nn
 from deepspec.utils.sampling import sample_tokens
 
 class VanillaMarkov(nn.Module):
-    def __init__(self, *, vocab_size: int, markov_rank: int):
+    """Low-rank previous-token logit bias.
+
+    The two factors do not share a vocabulary when the draft is pruned. ``W1``
+    is indexed by the preceding *real* token, which can be any target id, so it
+    stays at the full target vocabulary. ``W2`` emits a bias added onto the
+    draft logits, so it follows the draft vocabulary.
+    """
+
+    def __init__(
+        self,
+        *,
+        vocab_size: int,
+        markov_rank: int,
+        draft_vocab_size: Optional[int] = None,
+    ):
         super().__init__()
         self.vocab_size = int(vocab_size)
+        self.draft_vocab_size = int(draft_vocab_size or vocab_size)
         self.markov_rank = int(markov_rank)
         self.markov_head_type = "vanilla"
         assert self.markov_rank > 0, (
             f"VanillaMarkov requires markov_rank > 0, got {self.markov_rank}."
         )
         self.markov_w1 = nn.Embedding(self.vocab_size, self.markov_rank)
-        self.markov_w2 = nn.Linear(self.markov_rank, self.vocab_size, bias=False)
+        self.markov_w2 = nn.Linear(self.markov_rank, self.draft_vocab_size, bias=False)
 
     def get_prev_embeddings(self, token_ids: torch.Tensor) -> torch.Tensor:
         return self.markov_w1(token_ids.long())
@@ -59,7 +74,16 @@ class VanillaMarkov(nn.Module):
         first_prev_token_ids: torch.Tensor,
         hidden_states: Optional[torch.Tensor],
         temperature: float = 0.0,
+        to_target_ids: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample one block; the returned ids are in the TARGET vocabulary.
+
+        ``to_target_ids`` maps a sampled draft id back to its target id, and must
+        be applied before the id is fed back as ``prev_token_ids``: ``markov_w1``
+        is indexed by target ids, so a draft id would be a silently valid -- but
+        wrong -- row. The returned logits stay in the draft vocabulary, which is
+        the space the caller's probabilities live in.
+        """
         batch_size, proposal_len = base_logits.shape[:2]
         if proposal_len == 0:
             empty_tokens = torch.empty(
@@ -85,6 +109,8 @@ class VanillaMarkov(nn.Module):
                 step_logits.unsqueeze(1),
                 temperature=temperature,
             ).squeeze(1)
+            if to_target_ids is not None:
+                next_token_ids = to_target_ids(next_token_ids)
             sampled_tokens.append(next_token_ids)
             prev_token_ids = next_token_ids
         return torch.stack(sampled_tokens, dim=1), torch.cat(corrected_logits, dim=1)
@@ -97,8 +123,13 @@ class GatedMarkovHead(VanillaMarkov):
         vocab_size: int,
         markov_rank: int,
         hidden_size: int,
+        draft_vocab_size: Optional[int] = None,
     ):
-        super().__init__(vocab_size=vocab_size, markov_rank=markov_rank)
+        super().__init__(
+            vocab_size=vocab_size,
+            markov_rank=markov_rank,
+            draft_vocab_size=draft_vocab_size,
+        )
         self.markov_head_type = "gated"
         self.gate_proj = nn.Linear(hidden_size + markov_rank, markov_rank)
 
@@ -135,8 +166,13 @@ class RNNHead(VanillaMarkov):
         vocab_size: int,
         markov_rank: int,
         hidden_size: int,
+        draft_vocab_size: Optional[int] = None,
     ):
-        super().__init__(vocab_size=vocab_size, markov_rank=markov_rank)
+        super().__init__(
+            vocab_size=vocab_size,
+            markov_rank=markov_rank,
+            draft_vocab_size=draft_vocab_size,
+        )
         self.markov_head_type = "rnn"
         self.hidden_size = hidden_size
         # Joint projection: [s_{k-1}; W1[x_{k-1}]; h_k] -> [gate; candidate; output]
@@ -231,6 +267,7 @@ class RNNHead(VanillaMarkov):
         first_prev_token_ids: torch.Tensor,
         hidden_states: Optional[torch.Tensor],
         temperature: float = 0.0,
+        to_target_ids: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Autoregressive sampling with RNN state.
 
@@ -278,6 +315,8 @@ class RNNHead(VanillaMarkov):
                 step_logits.unsqueeze(1),
                 temperature=temperature,
             ).squeeze(1)
+            if to_target_ids is not None:
+                next_token_ids = to_target_ids(next_token_ids)
             sampled_tokens.append(next_token_ids)
             prev_token_ids = next_token_ids
 
@@ -285,6 +324,9 @@ class RNNHead(VanillaMarkov):
 
 
 def build_markov_head(config) -> nn.Module | None:
+    # W1 is indexed by the previous real token (target vocabulary); W2 emits the
+    # draft-side bias, so it follows draft_vocab_size when the vocab is pruned.
+    draft_vocab_size = getattr(config, "draft_vocab_size", None) or config.vocab_size
     markov_rank = int(config.markov_rank)
     assert markov_rank >= 0, f"markov_rank must be >= 0, got {markov_rank}"
     if markov_rank == 0:
@@ -294,17 +336,20 @@ def build_markov_head(config) -> nn.Module | None:
     if markov_head_type == "vanilla":
         return VanillaMarkov(
             vocab_size=config.vocab_size,
+            draft_vocab_size=draft_vocab_size,
             markov_rank=markov_rank,
         )
     if markov_head_type == "gated":
         return GatedMarkovHead(
             vocab_size=config.vocab_size,
+            draft_vocab_size=draft_vocab_size,
             markov_rank=markov_rank,
             hidden_size=config.hidden_size,
         )
     if markov_head_type == "rnn":
         return RNNHead(
             vocab_size=config.vocab_size,
+            draft_vocab_size=draft_vocab_size,
             markov_rank=markov_rank,
             hidden_size=config.hidden_size,
         )

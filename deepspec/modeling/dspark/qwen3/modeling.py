@@ -243,7 +243,30 @@ class Qwen3DSparkModel(Qwen3PreTrainedModel):
             bias=False,
         )
         self.hidden_norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        # Draft-vocabulary pruning: the draft predicts over the top-K target
+        # tokens only. embed_tokens stays at the full vocabulary because the
+        # input side must be able to represent any target token; only the output
+        # side shrinks. t2d/d2t are registered solely when pruning, so existing
+        # full-vocabulary checkpoints keep an unchanged state dict.
+        self.vocab_size = int(config.vocab_size)
+        self.draft_vocab_size = int(
+            getattr(config, "draft_vocab_size", None) or config.vocab_size
+        )
+        assert 0 < self.draft_vocab_size <= self.vocab_size, (
+            f"draft_vocab_size must be in (0, vocab_size]; got "
+            f"{self.draft_vocab_size} and {self.vocab_size}."
+        )
+        self.use_draft_vocab = self.draft_vocab_size != self.vocab_size
+        self.lm_head = nn.Linear(config.hidden_size, self.draft_vocab_size, bias=False)
+        if self.use_draft_vocab:
+            self.register_buffer(
+                "t2d", torch.zeros(self.vocab_size, dtype=torch.bool), persistent=True
+            )
+            self.register_buffer(
+                "d2t",
+                torch.zeros(self.draft_vocab_size, dtype=torch.long),
+                persistent=True,
+            )
         self.block_size = int(config.block_size)
         self.mask_token_id = config.mask_token_id
         self.num_anchors = int(config.num_anchors)
@@ -275,12 +298,45 @@ class Qwen3DSparkModel(Qwen3PreTrainedModel):
         freeze: bool = True,
     ):
         assert self.embed_tokens.weight.shape == embed_tokens.weight.shape
-        assert self.lm_head.weight.shape == lm_head.weight.shape
+        head_weight = lm_head.weight.detach()
+        if self.use_draft_vocab:
+            # Row-slicing keeps the same order as column-slicing the full logits,
+            # so draft index i corresponds to target id nonzero(t2d)[i]. The map
+            # must already be loaded; the zero-initialized buffer would select an
+            # empty head and fail silently rather than loudly.
+            assert bool(self.t2d.any()), (
+                "this draft prunes the target vocabulary but no t2d/d2t mapping "
+                "has been loaded; load the checkpoint's buffers first."
+            )
+            head_weight = head_weight[self.t2d.to(dtype=torch.bool)]
+        assert self.lm_head.weight.shape == head_weight.shape
         with torch.no_grad():
             self.embed_tokens.weight.copy_(embed_tokens.weight.detach())
-            self.lm_head.weight.copy_(lm_head.weight.detach())
+            self.lm_head.weight.copy_(head_weight)
         if freeze:
             self.set_embedding_head_trainable(False)
+
+    def draft_ids_to_target_ids(self, draft_ids: torch.Tensor) -> torch.Tensor:
+        """Map draft-vocabulary ids back to target ids (identity when unpruned)."""
+        if not self.use_draft_vocab:
+            return draft_ids
+        return draft_ids + self.d2t[draft_ids]
+
+    def scatter_draft_probs_to_target(self, draft_probs: torch.Tensor) -> torch.Tensor:
+        """Widen ``[..., draft_vocab]`` probabilities to ``[..., vocab]``.
+
+        Verification gathers the draft's probability for a proposed token using
+        that token's TARGET id, and rejects any draft distribution whose last
+        dimension differs from the target's. Pruned tokens get probability zero,
+        which is exactly right: the draft can never propose them, so the gather
+        only ever lands on kept entries.
+        """
+        if not self.use_draft_vocab:
+            return draft_probs
+        full = draft_probs.new_zeros((*draft_probs.shape[:-1], self.vocab_size))
+        kept = torch.nonzero(self.t2d.to(dtype=torch.bool), as_tuple=False).flatten()
+        full[..., kept] = draft_probs
+        return full
 
     def set_embedding_head_trainable(self, trainable: bool):
         self.embed_tokens.requires_grad_(trainable)
@@ -324,12 +380,18 @@ class Qwen3DSparkModel(Qwen3PreTrainedModel):
             )
             return empty_tokens, base_logits
         if self.markov_head is None:
-            return sample_tokens(base_logits, temperature), base_logits
+            sampled = sample_tokens(base_logits, temperature)
+            return self.draft_ids_to_target_ids(sampled), base_logits
+        # Sampled ids come back in the target vocabulary; the logits stay in the
+        # draft vocabulary, which is where the proposal's probabilities live.
         return self.markov_head.sample_block_tokens(
             base_logits,
             first_prev_token_ids=first_prev_token_ids,
             hidden_states=hidden_states,
             temperature=temperature,
+            to_target_ids=(
+                self.draft_ids_to_target_ids if self.use_draft_vocab else None
+            ),
         )
 
     def sample_draft_token_step(
@@ -356,7 +418,9 @@ class Qwen3DSparkModel(Qwen3PreTrainedModel):
             step_logits.unsqueeze(1),
             temperature=temperature,
         ).squeeze(1)
-        return sampled_token_ids, step_logits
+        # Target-space ids out; the caller feeds them back as prev_token_ids,
+        # which index the Markov head's W1 over the full target vocabulary.
+        return self.draft_ids_to_target_ids(sampled_token_ids), step_logits
 
     def _forward_backbone(
         self,
